@@ -21,13 +21,25 @@ class StreamingTTS:
     It simply obeys ResponseController.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        language: str | None = None,
+    ):
 
         self.provider = TTSFactory.get_provider()
+
+        self.language = language
 
         self.buffer = ""
 
         self.controller: ResponseController | None = None
+
+    def set_language(
+        self,
+        language: str | None,
+    ) -> None:
+
+        self.language = language
 
     def attach(
         self,
@@ -94,7 +106,10 @@ class StreamingTTS:
         sentence: str,
     ):
 
-        for audio in self.provider.stream(sentence):
+        for audio in self.provider.stream(
+            sentence,
+            language=self.language,
+        ):
 
             if self.cancelled():
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass
 from typing import Awaitable, Callable
 from urllib.parse import urlencode
 
@@ -11,36 +10,49 @@ from urllib.parse import urlencode
 import websockets
 
 from app.core.config import settings
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptEvent:
-    text: str
-    is_final: bool
-    speech_final: bool = False
-    confidence: float | None = None
-    provider: str = "deepgram"
-
-
-TranscriptHandler = Callable[[TranscriptEvent], Awaitable[None]]
-ErrorHandler = Callable[[str], Awaitable[None]]
-
-
-_VIA_NAME = re.compile(
-    r"\b(?:vee[\s-]?(?:ah|uh)|veeya|viah)\b",
-    re.IGNORECASE,
+from app.services.stt.streaming import (
+    ErrorHandler,
+    StreamingSTTProvider,
+    TranscriptEvent,
+    TranscriptHandler,
 )
+from app.services.voice.language import normalize_language_code
+
+__all__ = [
+    "DeepgramStreamingSTT",
+    "ErrorHandler",
+    "TranscriptEvent",
+    "TranscriptHandler",
+    "normalize_transcript",
+]
+
+
+_WHITESPACE = re.compile(r"\s+")
 
 
 def normalize_transcript(text: str) -> str:
-    """Normalize strong phonetic renderings of Via's name."""
+    """Collapse whitespace without rewriting the speaker's words."""
 
-    return _VIA_NAME.sub("Via", text).strip()
+    return _WHITESPACE.sub(" ", text).strip()
 
 
-class DeepgramStreamingSTT:
+def _deepgram_language(language_code: str) -> str:
+    """Map a session language onto Deepgram's language parameter."""
+
+    code = normalize_language_code(language_code)
+    if code == "hi-IN":
+        return "hi"
+    if code == "kn-IN":
+        return "kn"
+    if code == "en-IN":
+        return "en-IN"
+    return settings.DEEPGRAM_LANGUAGE
+
+
+class DeepgramStreamingSTT(StreamingSTTProvider):
     """One Deepgram live-transcription connection per voice session."""
 
+    name = "deepgram"
     BASE_URL = "wss://api.deepgram.com/v1/listen"
     KEEPALIVE_SECONDS = 4.0
 
@@ -49,8 +61,9 @@ class DeepgramStreamingSTT:
         on_transcript: TranscriptHandler,
         on_error: ErrorHandler,
     ) -> None:
-        self.on_transcript = on_transcript
-        self.on_error = on_error
+        super().__init__(on_transcript, on_error)
+
+        self.language_code = settings.DEEPGRAM_LANGUAGE
 
         self.websocket = None
         self.send_queue: asyncio.Queue[bytes | str] = asyncio.Queue(
@@ -65,11 +78,10 @@ class DeepgramStreamingSTT:
         self.closing = False
         self.failed = False
 
-    @staticmethod
-    def _url() -> str:
+    def _url(self) -> str:
         params = [
             ("model", settings.DEEPGRAM_MODEL),
-            ("language", settings.DEEPGRAM_LANGUAGE),
+            ("language", self.language_code),
             ("encoding", "linear16"),
             ("sample_rate", "16000"),
             ("channels", "1"),
@@ -103,12 +115,14 @@ class DeepgramStreamingSTT:
             f"{urlencode(params)}"
         )
 
-    async def start(self) -> None:
+    async def start(self, language_code: str = "auto") -> None:
         if self.started:
             return
 
         if not settings.DEEPGRAM_API_KEY:
             raise RuntimeError("DEEPGRAM_API_KEY is not configured")
+
+        self.language_code = _deepgram_language(language_code)
 
         self.websocket = await websockets.connect(
             self._url(),
@@ -207,6 +221,7 @@ class DeepgramStreamingSTT:
                         text=interim,
                         is_final=False,
                         confidence=confidence,
+                        provider=self.name,
                     )
                 )
             return
@@ -236,6 +251,7 @@ class DeepgramStreamingSTT:
                 is_final=True,
                 speech_final=True,
                 confidence=confidence,
+                provider=self.name,
             )
         )
 

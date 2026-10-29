@@ -305,6 +305,7 @@ class ConversationManager:
         document_ids: list[str] | None = None,
         client_id: str | None = None,
         interruption_context: dict | None = None,
+        language: str | None = None,
     ):
         if controller.response_id is None:
             controller.begin()
@@ -373,7 +374,7 @@ class ConversationManager:
                 }
 
                 # Pipe confirmation directly into TTS — no LLM call
-                tts = StreamingTTS()
+                tts = StreamingTTS(language=language)
                 tts.attach(controller)
                 try:
                     yield from self._sentence_items(
@@ -439,7 +440,7 @@ class ConversationManager:
                 ],
             },
         }
-        tts = StreamingTTS()
+        tts = StreamingTTS(language=language)
         tts.attach(controller)
 
         response = PausedResponse(
@@ -581,6 +582,7 @@ class ConversationManager:
         controller,
         session_id: str | None = None,
         log: bool = False,
+        language: str | None = None,
     ):
         text = text.strip()
         if not text:
@@ -590,7 +592,7 @@ class ConversationManager:
             controller.begin()
 
         response_id = controller.response_id
-        tts = StreamingTTS()
+        tts = StreamingTTS(language=language)
         tts.attach(controller)
 
         try:

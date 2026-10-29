@@ -40,7 +40,14 @@ class VoiceSession:
 
     stt_provider_name: str = "initializing"
 
-    deepgram: Any = None
+    # Active streaming STT connection (Sarvam or Deepgram).
+    stt_stream: Any = None
+
+    # Session language: ``auto`` or a locked BCP-47 code.
+    language: str = "auto"
+
+    # Last language Sarvam detected while ``language`` was ``auto``.
+    detected_language: str | None = None
 
     whisper_pipeline: Any = None
 
@@ -95,6 +102,14 @@ class VoiceSession:
     def touch(self):
 
         self.last_activity = datetime.utcnow()
+
+    @property
+    def effective_language(self) -> str | None:
+        """Language to synthesize in, following the spoken language."""
+
+        if self.language and self.language != "auto":
+            return self.language
+        return self.detected_language
 
     def set_state(
         self,
@@ -320,9 +335,9 @@ class VoiceSession:
         for task in tasks:
             task.cancel()
 
-        if self.deepgram is not None:
-            await self.deepgram.close()
-            self.deepgram = None
+        if self.stt_stream is not None:
+            await self.stt_stream.close()
+            self.stt_stream = None
 
         for task in tasks:
             try:

@@ -42,15 +42,18 @@ class ResumeIntentTests(unittest.TestCase):
         )
         self.assertEqual(classify_resume_intent("no thanks"), "no")
 
-    def test_via_name_normalization(self):
+    def test_transcript_normalization_keeps_words(self):
+        self.assertEqual(
+            normalize_transcript("  hello   world  "),
+            "hello world",
+        )
+        # The clone must not rewrite the speaker's words into another
+        # product's name.
         self.assertEqual(
             normalize_transcript("hello vee ah"),
-            "hello Via",
+            "hello vee ah",
         )
-        self.assertEqual(
-            normalize_transcript("Vee-uh please continue"),
-            "Via please continue",
-        )
+        self.assertNotIn("Via", normalize_transcript("Vee-uh please continue"))
 
     def test_resume_excerpt_is_short_and_retains_remainder(self):
         text = (

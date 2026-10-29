@@ -9,6 +9,7 @@ from app.services.conversation_service import ConversationService
 from app.services.emotion import EmotionResult, emotion_provider
 from app.services.session_repository import session_repository
 from app.services.conversation_manager import ConversationManager
+from app.services.stt.sarvam import SarvamStreamingSTT
 from app.services.voice.async_bridge import iter_in_thread
 from app.services.voice.connection_manager import VoiceConnectionManager
 from app.services.voice.deepgram import (
@@ -16,6 +17,7 @@ from app.services.voice.deepgram import (
     TranscriptEvent,
     normalize_transcript,
 )
+from app.services.voice.language import normalize_language_code
 from app.services.voice.resume_intent import (
     classify_interruption,
     classify_resume_intent,
@@ -121,6 +123,8 @@ class AudioHandler:
         self.manager = ConversationManager()
         self.emotion_provider = emotion_provider
 
+    STREAMING_PROVIDERS = {"sarvam", "deepgram"}
+
     async def start_session(
         self,
         session: VoiceSession,
@@ -135,6 +139,13 @@ class AudioHandler:
                 **self.emotion_provider.status,
             },
         )
+
+        try:
+            session.language = normalize_language_code(
+                settings.VOICE_DEFAULT_LANGUAGE
+            )
+        except ValueError:
+            session.language = "auto"
 
         provider = settings.VOICE_STT_PROVIDER
 
@@ -163,19 +174,80 @@ class AudioHandler:
             )
             return
 
-        if provider != "deepgram":
+        candidates = self._streaming_candidates()
+
+        if not candidates:
             session.stt_provider_name = "disabled"
             await self._send_error(
                 session,
                 connection_manager,
                 code="invalid_stt_provider",
                 message=(
-                    "VOICE_STT_PROVIDER must be deepgram or whisper"
+                    "VOICE_STT_PROVIDER must be sarvam, deepgram "
+                    "or whisper"
                 ),
                 recoverable=False,
             )
             return
 
+        if await self._start_streaming_chain(
+            session,
+            connection_manager,
+            candidates,
+        ):
+            return
+
+        await self._begin_fallback(
+            session,
+            connection_manager,
+            session.metadata.get(
+                "stt_failure_reason",
+                "No streaming transcription provider is available",
+            ),
+        )
+
+    def _streaming_candidates(self) -> list[str]:
+        """Ordered streaming providers for a new session."""
+
+        primary = settings.VOICE_STT_PROVIDER
+        candidates: list[str] = []
+
+        if primary not in self.STREAMING_PROVIDERS:
+            # whisper and unknown values are handled by start_session.
+            return candidates
+
+        candidates.append(primary)
+
+        if (
+            primary == "sarvam"
+            and settings.VOICE_ALLOW_DEEPGRAM_FALLBACK
+        ):
+            candidates.append("deepgram")
+
+        return candidates
+
+    def _fallback_after(self, provider_name: str) -> list[str]:
+        if (
+            provider_name == "sarvam"
+            and settings.VOICE_ALLOW_DEEPGRAM_FALLBACK
+        ):
+            return ["deepgram"]
+        return []
+
+    @staticmethod
+    def _provider_model(provider_name: str) -> str:
+        if provider_name == "sarvam":
+            return settings.SARVAM_STT_MODEL
+        if provider_name == "deepgram":
+            return settings.DEEPGRAM_MODEL
+        return ""
+
+    def _build_streaming_provider(
+        self,
+        provider_name: str,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+    ):
         async def on_transcript(event: TranscriptEvent) -> None:
             await self._handle_transcript_event(
                 session,
@@ -184,36 +256,202 @@ class AudioHandler:
             )
 
         async def on_error(reason: str) -> None:
+            await self._handle_streaming_failure(
+                session,
+                connection_manager,
+                provider_name,
+                reason,
+            )
+
+        if provider_name == "sarvam":
+            return SarvamStreamingSTT(
+                on_transcript=on_transcript,
+                on_error=on_error,
+                language_code=session.language,
+            )
+
+        if provider_name == "deepgram":
+            return DeepgramStreamingSTT(
+                on_transcript=on_transcript,
+                on_error=on_error,
+            )
+
+        raise ValueError(f"Unknown STT provider: {provider_name}")
+
+    async def _start_streaming_chain(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        provider_names: list[str],
+    ) -> bool:
+        """Start the first provider that accepts the connection."""
+
+        reasons: list[str] = []
+
+        for provider_name in provider_names:
+            provider = None
+            try:
+                provider = self._build_streaming_provider(
+                    provider_name,
+                    session,
+                    connection_manager,
+                )
+                await provider.start(session.language)
+            except Exception as exc:
+                reasons.append(f"{provider_name}: {exc}")
+                if provider is not None:
+                    try:
+                        await provider.close()
+                    except Exception:
+                        pass
+                continue
+
+            session.stt_stream = provider
+            session.stt_provider_name = provider_name
+            session.metadata["stt_active_provider"] = provider_name
+            session.metadata["stt_was_active"] = True
+
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "stt_ready",
+                    "provider": provider_name,
+                    "model": self._provider_model(provider_name),
+                    "language": session.language,
+                },
+            )
+            return True
+
+        session.metadata["stt_failure_reason"] = "; ".join(reasons)
+        return False
+
+    async def _handle_streaming_failure(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        provider_name: str,
+        reason: str,
+    ) -> None:
+        """Move to the next streaming provider, then to Whisper."""
+
+        if session.stt_provider_name != provider_name:
+            return
+        if session.metadata.get("stt_switching"):
+            return
+        if session.metadata.get("awaiting_fallback_consent"):
+            return
+
+        session.metadata["stt_switching"] = True
+        session.metadata["stt_last_provider"] = provider_name
+        session.metadata["stt_failure_reason"] = reason
+
+        try:
+            stream = session.stt_stream
+            session.stt_stream = None
+            session.stt_provider_name = "initializing"
+
+            if stream is not None:
+                try:
+                    await stream.close()
+                except Exception:
+                    pass
+
+            next_names = self._fallback_after(provider_name)
+
+            if next_names and await self._start_streaming_chain(
+                session,
+                connection_manager,
+                next_names,
+            ):
+                await connection_manager.send_json(
+                    session.session_id,
+                    {
+                        "type": "stt_switched",
+                        "from_provider": provider_name,
+                        "to_provider": session.stt_provider_name,
+                        "message": (
+                            "Primary transcription service unavailable; "
+                            "using a backup."
+                        ),
+                    },
+                )
+                return
+
             await self._begin_fallback(
                 session,
                 connection_manager,
                 reason,
             )
+        finally:
+            session.metadata.pop("stt_switching", None)
 
-        deepgram = DeepgramStreamingSTT(
-            on_transcript=on_transcript,
-            on_error=on_error,
-        )
-        session.deepgram = deepgram
-
+    async def _set_session_language(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        value: str,
+    ) -> None:
         try:
-            await deepgram.start()
-        except Exception as exc:
-            await self._begin_fallback(
+            code = normalize_language_code(value)
+        except ValueError as exc:
+            await self._send_error(
                 session,
                 connection_manager,
-                str(exc),
+                code="invalid_language",
+                message=str(exc),
+                recoverable=True,
             )
             return
 
-        session.stt_provider_name = "deepgram"
+        if code == session.language:
+            return
+
+        session.language = code
+        session.detected_language = None
+
+        stream = session.stt_stream
+        if stream is not None and await stream.set_language(code):
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "language_changed",
+                    "language": code,
+                },
+            )
+            return
+
+        # The provider cannot reconfigure in place (Deepgram): reconnect.
+        if session.stt_provider_name in self.STREAMING_PROVIDERS:
+            provider_name = session.stt_provider_name
+            session.metadata["stt_last_provider"] = provider_name
+
+            if stream is not None:
+                try:
+                    await stream.close()
+                except Exception:
+                    pass
+            session.stt_stream = None
+
+            started = await self._start_streaming_chain(
+                session,
+                connection_manager,
+                [provider_name] + self._fallback_after(provider_name),
+            )
+            if not started:
+                await self._begin_fallback(
+                    session,
+                    connection_manager,
+                    session.metadata.get(
+                        "stt_failure_reason",
+                        "Language change failed",
+                    ),
+                )
+
         await connection_manager.send_json(
             session.session_id,
             {
-                "type": "stt_ready",
-                "provider": "deepgram",
-                "model": settings.DEEPGRAM_MODEL,
-                "language": settings.DEEPGRAM_LANGUAGE,
+                "type": "language_changed",
+                "language": code,
             },
         )
 
@@ -244,29 +482,41 @@ class AudioHandler:
     ) -> None:
         if session.metadata.get("awaiting_fallback_consent"):
             return
-        if session.stt_provider_name in {"whisper", "disabled"}:
+        if session.stt_provider_name in {
+            "whisper",
+            "disabled",
+            "fallback_pending",
+        }:
             return
+
+        failed_provider = (
+            session.metadata.get("stt_last_provider")
+            or session.metadata.get("stt_active_provider")
+            or "streaming"
+        )
 
         if not settings.VOICE_ALLOW_WHISPER_FALLBACK:
             session.stt_provider_name = "disabled"
             await self._send_error(
                 session,
                 connection_manager,
-                code="deepgram_unavailable",
+                code="stt_unavailable",
                 message=reason,
                 recoverable=False,
             )
             return
 
-        was_mid_session = session.stt_provider_name == "deepgram"
+        was_mid_session = bool(
+            session.metadata.get("stt_was_active")
+        )
         session.metadata["awaiting_fallback_consent"] = True
         session.metadata["fallback_was_mid_session"] = was_mid_session
-        session.metadata["deepgram_failure_reason"] = reason
+        session.metadata["stt_failure_reason"] = reason
         session.stt_provider_name = "fallback_pending"
 
-        if session.deepgram is not None:
-            await session.deepgram.close()
-            session.deepgram = None
+        if session.stt_stream is not None:
+            await session.stt_stream.close()
+            session.stt_stream = None
 
         interrupted_id = session.interrupt_active_response()
         if interrupted_id is not None:
@@ -281,7 +531,7 @@ class AudioHandler:
         await self._send_error(
             session,
             connection_manager,
-            code="deepgram_unavailable",
+            code="stt_unavailable",
             message=reason,
             recoverable=True,
         )
@@ -289,7 +539,7 @@ class AudioHandler:
             session.session_id,
             {
                 "type": "stt_fallback_required",
-                "from_provider": "deepgram",
+                "from_provider": failed_provider,
                 "fallback_provider": "whisper",
                 "message": FALLBACK_WARNING_TEXT,
             },
@@ -514,6 +764,7 @@ class AudioHandler:
                             session.session_id,
                         ),
                         interruption_context=interruption_context,
+                        language=session.effective_language,
                     ),
                 )
 
@@ -563,6 +814,7 @@ class AudioHandler:
                     self.manager.speak_only(
                         text,
                         controller=controller,
+                        language=session.effective_language,
                     ),
                 )
             except Exception as exc:
@@ -628,6 +880,7 @@ class AudioHandler:
                         controller=controller,
                         session_id=session.session_id,
                         log=paused is not None,
+                        language=session.effective_language,
                     ),
                 )
 
@@ -752,6 +1005,9 @@ class AudioHandler:
         transcript = event.text.strip()
         if not transcript:
             return
+
+        if event.language:
+            session.detected_language = event.language
 
         async with session.turn_lock:
             session.commit_pending_interruption()
@@ -1078,6 +1334,7 @@ class AudioHandler:
 
         session.metadata["awaiting_fallback_consent"] = False
         session.stt_provider_name = "whisper"
+        session.metadata["stt_was_active"] = False
         session.pending_consent_audio = None
 
         await connection_manager.send_json(
@@ -1175,6 +1432,17 @@ class AudioHandler:
                 )
                 return
 
+            requested_language = (
+                message.get("language")
+                or message.get("language_code")
+            )
+            if requested_language:
+                await self._set_session_language(
+                    session,
+                    connection_manager,
+                    str(requested_language),
+                )
+
             state = await asyncio.to_thread(
                 ConversationService.bind,
                 session.session_id,
@@ -1257,14 +1525,16 @@ class AudioHandler:
     ) -> None:
         session.touch()
 
-        if session.stt_provider_name == "deepgram":
-            if session.deepgram is not None:
-                await session.deepgram.send_audio(data)
+        if (
+            session.stt_provider_name in self.STREAMING_PROVIDERS
+            and session.stt_stream is not None
+        ):
+            await session.stt_stream.send_audio(data)
 
         event = session.vad.update(data)
 
         if isinstance(event, SpeechStart):
-            if session.stt_provider_name == "deepgram":
+            if session.stt_provider_name in self.STREAMING_PROVIDERS:
                 response_id = (
                     session.begin_provisional_interruption()
                 )
@@ -1278,7 +1548,7 @@ class AudioHandler:
                         "response_id": response_id,
                     },
                 )
-                if session.stt_provider_name == "deepgram":
+                if session.stt_provider_name in self.STREAMING_PROVIDERS:
                     self._arm_interruption_watchdog(
                         session,
                         connection_manager,

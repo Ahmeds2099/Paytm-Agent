@@ -64,6 +64,17 @@ class Settings:
 
     CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
 
+    CARTESIA_MODEL: str = os.getenv(
+        "CARTESIA_MODEL",
+        "sonic-3.6",
+    )
+
+    # Cartesia uses this when the session language is still ``auto``.
+    VOICE_TTS_LANGUAGE: str = os.getenv(
+        "VOICE_TTS_LANGUAGE",
+        "en-IN",
+    )
+
     VOICE_SAMPLE_RATE: int = 16000
 
     VOICE_CHUNK_SIZE: int = 1024
@@ -80,13 +91,71 @@ class Settings:
 
     VOICE_STT_PROVIDER: str = os.getenv(
         "VOICE_STT_PROVIDER",
-        "deepgram",
+        "sarvam",
     ).strip().lower()
+
+    # Session language: ``auto`` keeps adaptive detection on. Callers may
+    # lock ``hi-IN``, ``kn-IN`` or ``en-IN`` per session.
+    VOICE_DEFAULT_LANGUAGE: str = os.getenv(
+        "VOICE_DEFAULT_LANGUAGE",
+        "auto",
+    ).strip()
 
     VOICE_ALLOW_WHISPER_FALLBACK: bool = os.getenv(
         "VOICE_ALLOW_WHISPER_FALLBACK",
         "true",
     ).strip().lower() in {"1", "true", "yes", "on"}
+
+    VOICE_ALLOW_DEEPGRAM_FALLBACK: bool = os.getenv(
+        "VOICE_ALLOW_DEEPGRAM_FALLBACK",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    # Sarvam realtime streaming speech-to-text.
+    SARVAM_API_KEY: str = os.getenv(
+        "SARVAM_API_KEY",
+        "",
+    )
+
+    SARVAM_STT_MODEL: str = os.getenv(
+        "SARVAM_STT_MODEL",
+        "saaras:v3-realtime",
+    )
+
+    # fast = lowest partial latency, best for barge-in.
+    SARVAM_STT_STREAM_TYPE: str = os.getenv(
+        "SARVAM_STT_STREAM_TYPE",
+        "fast",
+    )
+
+    SARVAM_STT_ENDPOINTING: str = os.getenv(
+        "SARVAM_STT_ENDPOINTING",
+        "vad",
+    )
+
+    SARVAM_STT_SILENCE_MS: int = int(os.getenv(
+        "SARVAM_STT_SILENCE_MS",
+        "500",
+    ))
+
+    SARVAM_STT_MIN_SPEECH_MS: int = int(os.getenv(
+        "SARVAM_STT_MIN_SPEECH_MS",
+        "250",
+    ))
+
+    SARVAM_STT_THRESHOLD: float = float(os.getenv(
+        "SARVAM_STT_THRESHOLD",
+        "0.3",
+    ))
+
+    # Optional terminology hint applied to final transcripts.
+    SARVAM_STT_PROMPT: str = os.getenv(
+        "SARVAM_STT_PROMPT",
+        (
+            "Paytm merchant payments, QR codes, settlements, "
+            "refunds and soundbox"
+        ),
+    )
 
     VIA_ENABLE_TOOLS: bool = os.getenv(
         "VIA_ENABLE_TOOLS",

@@ -164,3 +164,234 @@ path in Phase 1.
 | Clone runs on separate ports (3100/8100) | Pass |
 | Original fingerprint unchanged | Pass |
 | Voice turn works (transcript, reply, audio) | Pass (synthesized speech; live microphone check left to owner) |
+
+---
+
+## 2026-10-29 — Phase 1: Sarvam speech-to-text, language support, TTS interface
+
+### Scope
+
+Make Sarvam AI the active speech-to-text provider for Hindi (`hi-IN`),
+Kannada (`kn-IN`) and English (`en-IN`), keep Silero VAD for barge-in, add a
+provider-neutral STT/TTS interface, and keep the rest of the voice loop
+unchanged. Redis and Qdrant remain untouched in this phase.
+
+### Decision: Sarvam Realtime Streaming, not the brief's batch endpoint
+
+The brief names model `saaras:v3` on `/speech-to-text/ws`. Sarvam's current
+documentation for live agent audio uses **Realtime Streaming**:
+
+- endpoint `wss://api.sarvam.ai/speech-to-text-realtime/ws`
+- model `saaras:v3-realtime` (documented default; `saaras:v4` also available)
+- `stream_type=fast`, `encoding=linear16`, `sample_rate=16000`,
+  `endpointing=vad`
+- auth header `api-subscription-key`
+
+Realtime Streaming is the only option that returns partial transcripts while
+the merchant is still speaking, which barge-in needs. The batch endpoint would
+add a full-utterance round trip and break interruption latency. **Followed the
+docs and recorded the difference here.** All parameters are overridable
+through `SARVAM_*` settings, so switching back to the brief's endpoint is a
+config change plus a small adapter change, not a rewrite.
+
+Protocol implemented (`backend/app/services/stt/sarvam.py`):
+
+| Direction | Message |
+| --- | --- |
+| client → server | `{"event":"audio_input","audio":"<base64 PCM16>"}` |
+| client → server | `{"event":"config.update","language_code":"hi-IN"}` |
+| client → server | `{"event":"ping"}` every 20 s |
+| client → server | `{"event":"end"}` for a graceful close |
+| server → client | `session.begin`, `vad.speech_start`, `vad.speech_end` |
+| server → client | `transcript.partial`, `transcript.final`, `config.updated`, `pong` |
+| server → client | `session.end`, `error` (`code`, `is_fatal`, `message`, `status_code`) |
+
+Implementation notes:
+
+- Raw `websockets` client instead of the `sarvamai` SDK, because the SDK does
+  not expose linear16 PCM framing.
+- One transient reconnect on network failure; authentication and parameter
+  errors (`400`, `401`, `403`) are not retried.
+- Audio is base64-encoded into a bounded queue so the VAD loop never blocks on
+  the network.
+- Fatal `error` events and unexpected `session.end` hand control to the
+  fallback chain exactly once. Non-fatal errors are logged and the stream
+  continues.
+- Documented close codes are mapped to readable reasons: `1003` (rate limit,
+  quota, invalid key), `1008` (inactivity), `1011` (internal), `4000`
+  (invalid parameter). The brief mentions `403`; the endpoint documents
+  `4000` for parameter errors and `1003` for auth/quota, which is what the
+  code handles.
+
+### Provider chain and fallback
+
+`backend/app/services/voice/handlers/audio.py` now builds the STT stack from
+an ordered candidate list instead of hard-coding Deepgram:
+
+| Order | Provider | When |
+| --- | --- | --- |
+| 1 | Sarvam Realtime | `VOICE_STT_PROVIDER=sarvam` (default) |
+| 2 | Deepgram live | Sarvam fails to start or drops mid-session, `VOICE_ALLOW_DEEPGRAM_FALLBACK=true` |
+| 3 | Local faster-whisper | Both streaming providers unavailable and `VOICE_ALLOW_WHISPER_FALLBACK=true` (existing consent flow) |
+
+Behaviour:
+
+- A missing `SARVAM_API_KEY` is not a user-facing error: the chain skips to
+  Deepgram and the session continues. `stt_ready` reports the provider that
+  actually connected.
+- Mid-session provider changes emit `stt_switched` with
+  `from_provider`/`to_provider`, and the existing Whisper consent prompt is
+  reused when no streaming provider is left.
+- `VOICE_STT_PROVIDER` values other than `sarvam`, `deepgram` or `whisper`
+  now fail fast with `invalid_stt_provider`. Previously an unknown value
+  would have been silently served by the Deepgram backup.
+
+### Language handling
+
+- New `backend/app/services/voice/language.py`:
+  `normalize_language_code()` accepts `auto`, `hi-IN`, `kn-IN`, `en-IN` and
+  friendly aliases (`hi`, `hindi`, `kn`, `kannada`, `en`, `english`,
+  `en_in`, ...). Unsupported codes raise `ValueError`.
+- `VOICE_DEFAULT_LANGUAGE=auto` keeps Sarvam's adaptive detection on. A
+  client may lock a language by sending `session_init` with `language` or
+  `language_code`.
+- Sarvam applies a lock in place with `config.update`; Deepgram reconnects
+  with the mapped code (`hi-IN`→`hi`, `kn-IN`→`kn`, `en-IN`→`en-IN`,
+  `auto`→`DEEPGRAM_LANGUAGE`). A `language_changed` event is sent either way.
+- When Sarvam is in `auto` mode the detected `language` from each final
+  transcript is stored on the session (`detected_language`), and
+  `VoiceSession.effective_language` feeds the TTS request. The assistant
+  answers in the language the merchant just spoke.
+
+### Text-to-speech
+
+- New `TextToSpeechProvider` interface in
+  `backend/app/services/tts/base.py` (`BaseTTSProvider` kept as an alias).
+  Cartesia is still the only implementation, so a swap in a later phase is a
+  factory change.
+- Model moved from `sonic-3.5` to **`sonic-3.6`** (current general-availability
+  model, 44 languages). It speaks `hi`, `kn` and `en` natively, including
+  Hinglish.
+- `language` is now a per-request argument on `synthesize()` and `stream()`,
+  passed through `StreamingTTS` from `ConversationManager.stream_voice()` and
+  `speak_only()`. `auto` resolves to `VOICE_TTS_LANGUAGE` (default `en-IN`).
+- `CARTESIA_MODEL` and `VOICE_TTS_LANGUAGE` are configurable; previously the
+  model ID was hard-coded and the language was always `"en"`.
+
+### Inherited product-name rewriting removed
+
+`normalize_transcript()` previously rewrote phonetic renderings ("vee ah",
+"veeya", "viah") into "Via" before the text reached the LLM. In this product
+that injected another product's name into every transcript. It now only
+collapses whitespace. The corresponding unit test was updated to assert that
+the speaker's words are preserved.
+
+### Files
+
+Added:
+
+- `backend/app/services/stt/streaming.py` — `TranscriptEvent` (now with
+  `language`), `StreamingSTTProvider` ABC with `start`/`send_audio`/`close`/
+  `set_language`
+- `backend/app/services/stt/sarvam.py` — `SarvamStreamingSTT`
+- `backend/app/services/voice/language.py` — language normalization and
+  Cartesia mapping
+- `backend/app/services/tts/base.py` — `TextToSpeechProvider` (rewritten)
+- `backend/tests/test_sarvam_stt.py` — 19 tests
+- `backend/scripts/sarvam_stt_smoke.py` — owner-run live harness for
+  `hi-IN`, `kn-IN`, `en-IN`
+
+Changed:
+
+- `backend/app/services/voice/deepgram.py` — implements
+  `StreamingSTTProvider`, `name="deepgram"`, language-aware `start()`,
+  re-exports `TranscriptEvent`
+- `backend/app/services/voice/handlers/audio.py` — provider chain, fallback,
+  language switching, TTS language
+- `backend/app/services/voice/session.py` — `stt_stream`, `language`,
+  `detected_language`, `effective_language`
+- `backend/app/core/config.py` — Sarvam settings, `VOICE_DEFAULT_LANGUAGE`,
+  `VOICE_ALLOW_DEEPGRAM_FALLBACK`, `CARTESIA_MODEL`, `VOICE_TTS_LANGUAGE`,
+  default `VOICE_STT_PROVIDER=sarvam`
+- `backend/app/services/tts/cartesia.py`, `tts/stream.py`,
+  `conversation_manager.py` — per-request language, `sonic-3.6`
+- `backend/app/api/system.py` — `/system/status` reports `sarvam`, STT model,
+  default language and TTS model
+- `backend/tests/test_vf031.py` — transcript normalization expectation
+- `.env.example` — Sarvam block, `sonic-3.6`, `VOICE_DEFAULT_LANGUAGE`,
+  `Paytm:3` keyterm, port 3100 CORS
+
+`backend/.env` gained `SARVAM_API_KEY=` (empty until the owner supplies it),
+`VOICE_DEFAULT_LANGUAGE=auto` and `CARTESIA_MODEL=sonic-3.6`; its existing
+values were not printed or rewritten.
+
+### Tests
+
+`python -m unittest discover -s tests` → **54 tests, OK**. `compileall` is
+clean and `app.main` imports.
+
+Coverage added:
+
+- language aliases, rejection of unsupported codes, Cartesia fallback to the
+  default language
+- Sarvam URL parameters, partial/final events, detected language, locked
+  language echo, fatal error reported once, non-fatal error keeps the stream,
+  `config.update` on language change, empty finals ignored, close-code reasons
+- Deepgram language mapping and the Nova-3 `keyterm` parameter
+- provider chain ordering: Sarvam → Deepgram, Deepgram alone, fallback
+  disabled, Whisper primary skips streaming, factory builds the right
+  provider with the session language
+
+### Live verification
+
+| Check | Result |
+| --- | --- |
+| `GET /system/status` | `sarvam: missing`, `stt_provider: sarvam`, `stt_model: saaras:v3-realtime`, `default_language: auto`, `tts_model: sonic-3.6` |
+| Voice socket handshake | `connected`, `emotion_status`, `stt_ready provider=deepgram` (Sarvam skipped: no key) |
+| Full voice turn over the socket | transcript "Hello. What can you help me with?", streamed reply, Cartesia audio frames, `assistant_audio_end` |
+| Sarvam endpoint reachability | Connected with a deliberately invalid key; server returned `error` `invalid_subscription_key` (status 401), reported once, no retry storm |
+| Fallback behaviour without a key | Session continues on Deepgram with no user-visible error |
+
+The invalid-key probe proves the URL, auth header and error parsing are
+correct against the live service. It does not prove transcription quality;
+that needs a real key.
+
+### Not verified yet
+
+- Real Sarvam transcripts in Hindi, Kannada and English.
+  `SARVAM_API_KEY` is not present in `backend/.env` or the process
+  environment. Once the owner adds it, run from `backend/`:
+
+  ```
+  .venv\Scripts\python.exe scripts\sarvam_stt_smoke.py --language hi-IN --sample
+  .venv\Scripts\python.exe scripts\sarvam_stt_smoke.py --language kn-IN --sample
+  .venv\Scripts\python.exe scripts\sarvam_stt_smoke.py --language en-IN --sample
+  ```
+
+  Each run synthesizes a Paytm support sentence with Cartesia in the target
+  language, streams it to Sarvam, and prints partials plus the final
+  transcript. Exit code 0 means a final transcript arrived.
+- Browser microphone check (owner).
+- Barge-in in the browser with Sarvam active (owner). Silero VAD and the
+  provisional-interruption watchdog are unchanged, and their unit tests still
+  pass, but the real path has only been exercised with Deepgram so far.
+
+### Docs vs brief, recorded
+
+| Brief | Current docs / implementation |
+| --- | --- |
+| `saaras:v3` on `/speech-to-text/ws` | `saaras:v3-realtime` on `/speech-to-text-realtime/ws` |
+| error `403` for auth | `error` event with `status_code: 401`, close code `1003` for auth/quota, `4000` for parameter errors |
+| Deepgram active | Sarvam active, Deepgram first backup, Whisper last resort |
+
+### Phase 1 acceptance
+
+| Acceptance item | Status |
+| --- | --- |
+| Sarvam is the configured STT provider | Pass |
+| Hindi, Kannada, English codes accepted end to end | Pass in code and tests; live audio pending key |
+| Silero VAD still drives barge-in | Pass (unchanged, tests green) |
+| Fallback Sarvam → Deepgram → Whisper | Pass (Deepgram path exercised live; Whisper path unchanged from Phase 0) |
+| TTS behind an interface, per-request language | Pass |
+| No secrets printed or committed | Pass |
+| Owner browser verification | Pending |

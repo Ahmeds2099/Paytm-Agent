@@ -23,6 +23,7 @@ async def system_status():
         "environment": settings.ENVIRONMENT,
         "status": "running",
         "providers": {
+            "sarvam": "configured" if settings.SARVAM_API_KEY else "missing",
             "deepgram": "configured" if settings.DEEPGRAM_API_KEY else "missing",
             "groq": "configured" if settings.GROQ_API_KEY else "missing",
             "cartesia": "configured" if settings.CARTESIA_API_KEY else "missing",
@@ -34,6 +35,14 @@ async def system_status():
             "tools_enabled": settings.VIA_ENABLE_TOOLS,
             "emotion_enabled": settings.VOICE_ENABLE_EMOTION,
             "mode": "lite" if settings.ENVIRONMENT == "production" else "local",
+            "stt_provider": settings.VOICE_STT_PROVIDER,
+            "stt_model": (
+                settings.SARVAM_STT_MODEL
+                if settings.VOICE_STT_PROVIDER == "sarvam"
+                else settings.DEEPGRAM_MODEL
+            ),
+            "default_language": settings.VOICE_DEFAULT_LANGUAGE,
+            "tts_model": settings.CARTESIA_MODEL,
         },
         "persistence": "ready" if redis_ready else "degraded",
     }

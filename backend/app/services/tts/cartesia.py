@@ -5,10 +5,13 @@ from app.core.config import settings
 from app.services.conversation.response_controller import (
     ResponseController,
 )
-from app.services.tts.base import BaseTTSProvider
+from app.services.tts.base import TextToSpeechProvider
+from app.services.voice.language import cartesia_language_code
 
 
-class CartesiaProvider(BaseTTSProvider):
+class CartesiaProvider(TextToSpeechProvider):
+
+    name = "cartesia"
 
     def __init__(self):
 
@@ -39,11 +42,16 @@ class CartesiaProvider(BaseTTSProvider):
     def synthesize(
         self,
         text: str,
+        language: str | None = None,
     ) -> bytes:
 
         response = self.client.tts.generate(
-            model_id="sonic-3.5",
+            model_id=settings.CARTESIA_MODEL,
             transcript=text,
+            language=cartesia_language_code(
+                language,
+                settings.VOICE_TTS_LANGUAGE,
+            ),
             voice={
                 "mode": "id",
                 "id": settings.CARTESIA_VOICE_ID,
@@ -60,6 +68,7 @@ class CartesiaProvider(BaseTTSProvider):
     def stream(
         self,
         text: str,
+        language: str | None = None,
     ):
 
         if self.cancelled():
@@ -68,12 +77,15 @@ class CartesiaProvider(BaseTTSProvider):
         with self.client.tts.websocket_connect() as connection:
 
             ctx = connection.context(
-                model_id="sonic-3.5",
+                model_id=settings.CARTESIA_MODEL,
                 voice={
                     "mode": "id",
                     "id": settings.CARTESIA_VOICE_ID,
                 },
-                language="en",
+                language=cartesia_language_code(
+                    language,
+                    settings.VOICE_TTS_LANGUAGE,
+                ),
                 output_format={
                     "container": "raw",
                     "encoding": "pcm_f32le",
