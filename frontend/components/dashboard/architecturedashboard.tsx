@@ -192,7 +192,7 @@ export default function ArchitectureDashboard({
                 <div><strong>User asked</strong><time>{new Date(turn.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div>
                 <p className="trace-question">{question}</p>
                 <dl className="trace-details">
-                  <div><dt>Via answered</dt><dd>{turn.text || "Response is being prepared..."}</dd></div>
+                  <div><dt>Assistant answered</dt><dd>{turn.text || "Response is being prepared..."}</dd></div>
                   <div><dt>Knowledge used</dt><dd>{provenanceLabel(turn.provenance)}{turn.sources?.length ? `, ${turn.sources.length} passages` : ""}</dd></div>
                   <div><dt>Emotion adaptation</dt><dd>{turn.emotionAdapted ? `Simplified for ${turn.emotionLabel ?? "uncertainty"}` : turn.emotionLabel ? `Observed as ${turn.emotionLabel}` : "No adaptation recorded"}</dd></div>
                   <div><dt>Latency</dt><dd>{turn.metrics?.serverResponseMs ? `${turn.metrics.serverResponseMs} ms` : "Measuring"}</dd></div>
@@ -201,7 +201,7 @@ export default function ArchitectureDashboard({
               </article>
             );
           })}
-          {!assistantTurns.length && <div className="teaching-empty"><strong>No turns measured yet</strong><p>Start a voice conversation, then return here to inspect its path through Via.</p></div>}
+          {!assistantTurns.length && <div className="teaching-empty"><strong>No turns measured yet</strong><p>Start a voice conversation, then return here to inspect its path through the assistant.</p></div>}
         </div>
       </section>
     </div>

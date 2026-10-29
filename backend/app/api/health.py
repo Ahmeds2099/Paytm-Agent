@@ -7,6 +7,6 @@ router = APIRouter(prefix="/health", tags=["Health"])
 async def health():
     return {
         "status": "ok",
-        "service": "Via Backend",
+        "service": "Paytm Voice Teammate Backend",
         "version": "0.1.0",
     }

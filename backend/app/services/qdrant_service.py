@@ -19,7 +19,7 @@ from app.core.qdrant import client
 
 
 class QdrantService:
-    COLLECTION_NAME = "via_documents"
+    COLLECTION_NAME = "paytm_policy"
 
     @classmethod
     def initialize(cls) -> None:

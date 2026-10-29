@@ -20,7 +20,7 @@ from app.services.session_repository import session_repository
 
 
 class MemoryService:
-    COLLECTION_NAME = "via_memories"
+    COLLECTION_NAME = "paytm_memory"
 
     def __init__(self) -> None:
         self.embedder = EmbeddingService()

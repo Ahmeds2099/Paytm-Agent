@@ -5,7 +5,7 @@ load_dotenv()
 
 
 class Settings:
-    APP_NAME = "Via Backend"
+    APP_NAME = "Paytm Voice Teammate Backend"
     VERSION = "0.1.0"
 
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
@@ -14,7 +14,7 @@ class Settings:
         origin.strip()
         for origin in os.getenv(
             "CORS_ORIGINS",
-            "http://localhost:3000,http://127.0.0.1:3000",
+            "http://localhost:3100,http://127.0.0.1:3100",
         ).split(",")
         if origin.strip()
     ]
@@ -121,7 +121,7 @@ class Settings:
 
     DEEPGRAM_KEYWORDS: str = os.getenv(
         "DEEPGRAM_KEYWORDS",
-        "Via:3,Vee-ah:2,Vee-uh:2",
+        "Paytm:3",
     )
 
     VOICE_MAX_TOKENS: int = int(os.getenv(

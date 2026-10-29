@@ -1,5 +1,5 @@
-APP_NAME = "Via"
+APP_NAME = "Paytm Voice Teammate"
 
 VERSION = "0.1.0"
 
-AUTHOR = "Team Via"
+AUTHOR = "Team Paytm Voice Teammate"

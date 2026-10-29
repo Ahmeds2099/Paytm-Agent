@@ -245,8 +245,8 @@ class SessionRepositoryTests(unittest.TestCase):
 
         self.assertEqual(commands[0][-1], repository.SESSION_TTL_SECONDS)
         self.assertEqual(commands[1][-1], repository.MEMORY_TTL_SECONDS)
-        self.assertIn("via:session:client-1", commands[0])
-        self.assertIn("via:memories:client-1", commands[1])
+        self.assertIn("paytm:session:client-1", commands[0])
+        self.assertIn("paytm:memories:client-1", commands[1])
 
     def test_missing_credentials_uses_memory_fallback(self):
         repository = SessionRepository()

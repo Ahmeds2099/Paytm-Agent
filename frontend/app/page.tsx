@@ -85,7 +85,7 @@ function ConversationTimeline({
         {visibleTurns.map((turn) => (
           <article className="conversation-turn" data-role={turn.role} key={turn.id}>
             <div className="turn-meta">
-              <strong>{turn.role === "assistant" ? "Via" : "You"}</strong>
+              <strong>{turn.role === "assistant" ? "Assistant" : "You"}</strong>
               <time>{new Date(turn.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
             </div>
             <p>{turn.text || <span className="response-skeleton">Preparing a response</span>}</p>
@@ -112,7 +112,7 @@ function ConversationTimeline({
           <div className="teaching-empty conversation-empty">
             <span className="empty-mark">V</span>
             <strong>Your conversation will appear here</strong>
-            <p>Start listening and ask Via anything. Add a source only when you want grounded, domain-specific answers.</p>
+            <p>Start listening and ask the assistant anything. Add a source only when you want grounded, domain-specific answers.</p>
           </div>
         )}
       </div>}
@@ -152,9 +152,9 @@ export default function HomePage() {
     <main className="app-shell">
       <a href="#main-content" className="skip-link">Skip to main content</a>
       <header className="site-header">
-        <button className="brand" type="button" onClick={() => setEntered(false)} aria-label="Via home">
+        <button className="brand" type="button" onClick={() => setEntered(false)} aria-label="Paytm Voice Teammate home">
           <span className="brand-mark">V</span>
-          <span><strong>Via</strong><small>Voice interruption agent</small></span>
+          <span><strong>Paytm</strong><small>Voice teammate</small></span>
         </button>
 
         {entered ? (
@@ -189,38 +189,38 @@ export default function HomePage() {
         <div id="main-content" className="landing-view">
           <section className="hero-copy">
             <p className="section-label">Voice interruption agent</p>
-            <h1>Speak naturally.<br /><span>Via keeps the thread.</span></h1>
+            <h1>Speak naturally.<br /><span>The teammate keeps the thread.</span></h1>
             <p className="hero-lede">
               A voice mentor that listens in real time, adapts to how you feel, remembers what matters, and can become an expert in any document you choose.
             </p>
             <div className="hero-actions">
               <button className="primary-action large" type="button" onClick={startVia}>
-                <span className="button-status-dot" />Start Via
+                <span className="button-status-dot" />Start the teammate
               </button>
               <button className="quiet-action large" type="button" onClick={() => document.getElementById("demo-sources")?.scrollIntoView({ behavior: "smooth" })}>
                 Explore demo sources
               </button>
             </div>
-            <p className="no-source-note">No document required. Via begins in general-assistant mode.</p>
+            <p className="no-source-note">No document required. The assistant begins in general mode.</p>
           </section>
 
-          <section className="hero-orb" aria-label={`Via is ${voice.voiceState}`}>
+          <section className="hero-orb" aria-label={`Assistant is ${voice.voiceState}`}>
             <div className="landing-orb" data-state="idle" aria-hidden="true">
               <span className="landing-orb-letter">V</span>
             </div>
             <div className="hero-status"><span>Listening</span><span>Understanding</span><span>Responding</span></div>
           </section>
 
-          <section className="landing-proof" aria-label="Via capabilities">
-            <div><strong>Interrupt without losing the thread</strong><p>Via pauses, handles the side question, and resumes from the right place.</p></div>
-            <div><strong>Bring any working context</strong><p>PDF, CSV, or JSON changes Via&apos;s role while provenance keeps answers honest.</p></div>
+          <section className="landing-proof" aria-label="Assistant capabilities">
+            <div><strong>Interrupt without losing the thread</strong><p>The assistant pauses, handles the side question, and resumes from the right place.</p></div>
+            <div><strong>Bring any working context</strong><p>PDF, CSV, or JSON changes the assistant&apos;s role while provenance keeps answers honest.</p></div>
             <div><strong>Adapt to the human signal</strong><p>Local emotional cues make explanations calmer, clearer, and better timed.</p></div>
           </section>
 
           <section className="demo-section" id="demo-sources">
             <div className="demo-intro">
               <p className="section-label">Optional knowledge</p>
-              <h2>Give Via a world to work in.</h2>
+              <h2>Give the assistant a world to work in.</h2>
               <p>Use a prepared source for the fastest demo, upload your own, or continue without one.</p>
               <form className="upload-inline" onSubmit={submitUpload}>
                 <input
@@ -261,7 +261,7 @@ export default function HomePage() {
                   <button className="danger-quiet" type="button" onClick={voice.removeDocument}>Remove source</button>
                 </div>
               ) : (
-                <div className="general-mode-note"><strong>General mode is active</strong><p>Via can talk now. Add a source only for grounded domain expertise.</p></div>
+                <div className="general-mode-note"><strong>General mode is active</strong><p>The assistant can talk now. Add a source only for grounded domain expertise.</p></div>
               )}
               <SourceOptions demos={voice.demoDocuments} uploading={voice.uploading} activeSlug={voice.activeDocument?.demo_slug} onDemo={chooseDemo} />
               <form className="drawer-upload" onSubmit={submitUpload}>
@@ -288,7 +288,7 @@ export default function HomePage() {
                 />
 
                 <div className="live-answer" aria-live="polite">
-                  <p className="section-label">Via&apos;s current response</p>
+                  <p className="section-label">Assistant&apos;s current response</p>
                   <p>{voice.assistantResponse || latestAssistant?.text || "Ask a question when you're ready."}</p>
                   {latestAssistant?.provenance && (
                     <span className="provenance" data-type={latestAssistant.provenance}>{provenanceLabel(latestAssistant.provenance)}</span>
@@ -321,7 +321,7 @@ export default function HomePage() {
 
           {(voice.voiceError || voice.systemError) && (
             <div className="error-banner" role="alert">
-              <div><strong>Via needs attention</strong><p>{voice.voiceError || voice.systemError}</p></div>
+              <div><strong>The assistant needs attention</strong><p>{voice.voiceError || voice.systemError}</p></div>
               <div className="error-actions"><button className="quiet-action" type="button" onClick={() => void voice.checkSystem()}>Check again</button><button className="close-error" type="button" onClick={() => { voice.dismissVoiceError(); voice.dismissSystemError(); }} aria-label="Dismiss error">x</button></div>
             </div>
           )}

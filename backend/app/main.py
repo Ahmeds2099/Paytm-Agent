@@ -76,5 +76,5 @@ app.include_router(voice.router)
 @app.get("/")
 async def root():
     return {
-        "message": "Via Backend Running"
+        "message": "Paytm Voice Teammate Backend Running"
     }

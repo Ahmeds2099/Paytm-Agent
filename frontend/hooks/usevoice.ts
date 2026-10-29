@@ -19,8 +19,8 @@ import type {
     VoiceState,
 } from "@/lib/voice/types";
 
-const CLIENT_ID_KEY = "via_client_id";
-const DOCUMENT_KEY = "via_active_document";
+const CLIENT_ID_KEY = "paytm_client_id";
+const DOCUMENT_KEY = "paytm_active_document";
 
 const createClientId = () => {
     const bytes = new Uint8Array(16);
@@ -142,7 +142,7 @@ export function useVoice() {
             setSystemError("");
             return true;
         } catch {
-            setSystemError(`Via backend is not reachable at ${apiBase}.`);
+            setSystemError(`Paytm backend is not reachable at ${apiBase}.`);
             return false;
         } finally {
             clearTimeout(timer);
@@ -224,7 +224,7 @@ export function useVoice() {
             setConnecting(false);
             setVoiceState("error");
             setVoiceError(
-                `Unable to reach Via at ${apiBase}. It may still be starting up or currently unavailable.`,
+                `Unable to reach the assistant at ${apiBase}. It may still be starting up or currently unavailable.`,
             );
             return;
         }

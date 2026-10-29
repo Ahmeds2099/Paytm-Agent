@@ -2,13 +2,13 @@ import type { VoiceState } from "@/lib/voice/types";
 
 const STATE_COPY: Record<VoiceState, { label: string; detail: string }> = {
   idle: { label: "Ready", detail: "Start listening when you are ready." },
-  connecting: { label: "Connecting", detail: "Opening Via's real-time voice channel." },
+  connecting: { label: "Connecting", detail: "Opening the assistant's real-time voice channel." },
   waking_up: { label: "Waking up…", detail: "The server is starting up. This can take up to 60 seconds on the free tier." },
-  listening: { label: "Listening", detail: "Speak naturally. You can interrupt Via at any time." },
+  listening: { label: "Listening", detail: "Speak naturally. You can interrupt the assistant at any time." },
   thinking: { label: "Thinking", detail: "Retrieving context and preparing a response." },
-  speaking: { label: "Speaking", detail: "Via is responding. Start speaking to barge in." },
+  speaking: { label: "Speaking", detail: "The assistant is responding. Start speaking to barge in." },
   interrupted: { label: "Interrupted", detail: "Your question is taking priority." },
-  fallback: { label: "Needs attention", detail: "Choose how Via should continue transcription." },
+  fallback: { label: "Needs attention", detail: "Choose how the assistant should continue transcription." },
   error: { label: "Unavailable", detail: "Review the issue below, then retry." },
 };
 
@@ -40,7 +40,7 @@ export default function VoiceOrb({
       ? onStopListening
       : onStartListening;
   const primaryLabel = !connected
-    ? connecting ? "Connecting…" : "Connect Via"
+    ? connecting ? "Connecting…" : "Connect assistant"
     : listening ? "Stop listening" : "Start listening";
 
   return (

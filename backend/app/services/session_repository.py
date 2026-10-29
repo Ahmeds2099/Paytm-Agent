@@ -30,11 +30,11 @@ class SessionRepository:
 
     @staticmethod
     def _key(client_id: str) -> str:
-        return f"via:session:{client_id}"
+        return f"paytm:session:{client_id}"
 
     @staticmethod
     def _memory_key(client_id: str) -> str:
-        return f"via:memories:{client_id}"
+        return f"paytm:memories:{client_id}"
 
     @property
     def status(self) -> dict:

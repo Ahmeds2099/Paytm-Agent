@@ -111,7 +111,7 @@ class ConversationManager:
                     "role": "system",
                     "content": (
                         "Answer this independent side question directly. Do "
-                        "not ask whether the user wants to resume; Via will "
+                        "not ask whether the user wants to resume; the assistant will "
                         "return to the paused answer automatically."
                     ),
                 })

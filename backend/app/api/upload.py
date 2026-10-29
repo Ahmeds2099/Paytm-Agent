@@ -102,7 +102,7 @@ def _ingest_contents(
             status_code=503,
             detail=(
                 "Document ingestion is temporarily unavailable. "
-                "You can continue using Via without a document. "
+                "You can continue without a document. "
                 f"Details: {exc}"
             ),
         ) from exc
