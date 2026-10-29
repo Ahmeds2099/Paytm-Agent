@@ -111,6 +111,56 @@ rewrite the relevant modules.
 
 ### Baseline check
 
-Pending: start backend on 8100, frontend on 3100, confirm health endpoints and
-that the unchanged voice turn (microphone, transcript, reply, barge-in, resume)
-still works.
+Services started in the clone:
+
+- Backend: `uvicorn app.main:app --host 127.0.0.1 --port 8100`
+- Frontend: `npm run dev` (`next dev -p 3100`)
+
+Results:
+
+| Check | Result |
+| --- | --- |
+| `GET http://127.0.0.1:8100/` | 200, "Paytm Voice Teammate Backend Running" |
+| `GET /health` | 200, `{"status":"ok"}` |
+| `GET /system/status` | 200, Deepgram/Groq/Cartesia configured |
+| `GET http://127.0.0.1:3100` | 200, title "Paytm Voice Teammate", no "Via" in HTML |
+| Voice socket `ws://127.0.0.1:8100/ws/voice` | `connected`, `emotion_status`, `stt_ready` (deepgram) |
+| Full voice turn (synthesized speech) | transcript, LLM tokens, Cartesia audio frames, `assistant_audio_end` |
+| Original fingerprint after | identical to before, 135/135 files |
+
+Voice turn detail: a 2.08 s English clip was generated locally with Windows
+speech synthesis, resampled to 16 kHz mono linear16 and streamed to the socket
+in real time. Observed transcript: "Hello. What can you help me with?". The
+assistant streamed "I'm the Paytm Voice Teammate, here to help you run your
+Paytm merchant business." and produced 22 binary audio frames. Silence-based
+end of utterance worked (Silero VAD logged speech start and end).
+
+### Baseline defect found and fixed
+
+Deepgram rejected the streaming connection with HTTP 400:
+`INVALID_QUERY_PARAMETER: Keywords are not supported for Nova-3. Please use
+keyterm instead.` The inherited code sent `keywords` while
+`DEEPGRAM_MODEL=nova-3`. Without this fix the clone fell back to local
+Whisper on every session. Fixed in `backend/app/services/voice/deepgram.py`:
+the keyword parameter is now `keyterm` for `nova-3` and `keywords` for older
+models. This is a compatibility fix only; Deepgram is removed from the active
+path in Phase 1.
+
+### Environment issues observed (not caused by the clone)
+
+- `concise-tapir-162853.upstash.io` does not resolve, so Redis persistence is
+  degraded and the session repository uses its in-process fallback. The clone
+  uses `paytm:` keys, so no data can reach the original's namespace.
+- `QDRANT_URL` is unreachable from this machine, so retrieval and memory are
+  unavailable. The assistant still answers in general mode.
+- First utterance after a fresh install is slow because Emotion2Vec, the
+  FastEmbed model and the Whisper fallback model download on first use.
+
+### Phase 0 acceptance
+
+| Acceptance item | Status |
+| --- | --- |
+| Backup archive exists and verified | Pass |
+| Clone runs on separate ports (3100/8100) | Pass |
+| Original fingerprint unchanged | Pass |
+| Voice turn works (transcript, reply, audio) | Pass (synthesized speech; live microphone check left to owner) |

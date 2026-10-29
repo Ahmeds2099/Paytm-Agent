@@ -85,10 +85,18 @@ class DeepgramStreamingSTT:
             ),
         ]
 
+        # Nova-3 replaced the "keywords" query parameter with "keyterm" and
+        # rejects the old name with HTTP 400 (INVALID_QUERY_PARAMETER).
+        keyword_param = (
+            "keyterm"
+            if settings.DEEPGRAM_MODEL.startswith("nova-3")
+            else "keywords"
+        )
+
         for keyword in settings.DEEPGRAM_KEYWORDS.split(","):
             keyword = keyword.strip()
             if keyword:
-                params.append(("keywords", keyword))
+                params.append((keyword_param, keyword))
 
         return (
             f"{DeepgramStreamingSTT.BASE_URL}?"
