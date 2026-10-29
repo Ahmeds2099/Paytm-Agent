@@ -18,6 +18,17 @@ from app.services.stt.streaming import (
 from app.services.voice.language import normalize_language_code
 
 
+# Sarvam occasionally emits a stray quote before speech onset in partials.
+# Final transcripts are post-processed by the server and do not need this.
+_PARTIAL_EDGE = "\"'“”‘’ \t\r\n"
+
+
+def clean_partial(text: str) -> str:
+    """Drop stray quote characters around an interim transcript."""
+
+    return text.strip(_PARTIAL_EDGE)
+
+
 class SarvamStreamingSTT(StreamingSTTProvider):
     """Sarvam realtime streaming speech-to-text (``saaras:v3-realtime``).
 
@@ -262,7 +273,7 @@ class SarvamStreamingSTT(StreamingSTTProvider):
         event = message.get("event") or message.get("type")
 
         if event == "transcript.partial":
-            text = (message.get("text") or "").strip()
+            text = clean_partial(message.get("text") or "")
             if not text:
                 return
             await self.on_transcript(

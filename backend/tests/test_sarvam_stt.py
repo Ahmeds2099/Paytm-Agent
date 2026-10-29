@@ -163,6 +163,27 @@ class SarvamStreamTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.events, [])
 
+    async def test_stray_quote_is_removed_from_partials(self):
+        await self.provider._handle_message(
+            {
+                "event": "transcript.partial",
+                "utterance_idx": 0,
+                "text": "\"'Hello. What",
+            }
+        )
+        self.assertEqual(self.events[0].text, "Hello. What")
+        self.assertFalse(self.events[0].is_final)
+
+    async def test_quote_only_partial_is_dropped(self):
+        await self.provider._handle_message(
+            {
+                "event": "transcript.partial",
+                "utterance_idx": 0,
+                "text": "\"",
+            }
+        )
+        self.assertEqual(self.events, [])
+
     def test_close_code_reasons(self):
         reason = SarvamStreamingSTT._close_reason(1003, "")
         self.assertIn("invalid subscription key", reason)

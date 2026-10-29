@@ -327,7 +327,7 @@ values were not printed or rewritten.
 
 ### Tests
 
-`python -m unittest discover -s tests` → **54 tests, OK**. `compileall` is
+`python -m unittest discover -s tests` → **56 tests, OK**. `compileall` is
 clean and `app.main` imports.
 
 Coverage added:
@@ -346,35 +346,57 @@ Coverage added:
 
 | Check | Result |
 | --- | --- |
-| `GET /system/status` | `sarvam: missing`, `stt_provider: sarvam`, `stt_model: saaras:v3-realtime`, `default_language: auto`, `tts_model: sonic-3.6` |
-| Voice socket handshake | `connected`, `emotion_status`, `stt_ready provider=deepgram` (Sarvam skipped: no key) |
-| Full voice turn over the socket | transcript "Hello. What can you help me with?", streamed reply, Cartesia audio frames, `assistant_audio_end` |
-| Sarvam endpoint reachability | Connected with a deliberately invalid key; server returned `error` `invalid_subscription_key` (status 401), reported once, no retry storm |
+| `GET /system/status` | `sarvam: configured`, `stt_provider: sarvam`, `stt_model: saaras:v3-realtime`, `default_language: auto`, `tts_model: sonic-3.6` |
+| Voice socket handshake | `stt_ready provider=sarvam`, `model=saaras:v3-realtime`, `language=auto` |
+| Language lock over the socket | `session_init` with `language: "hi-IN"` → `language_changed: hi-IN` (Sarvam `config.update`, no reconnect) |
+| Full voice turn over the socket | Sarvam partials, final "Hello, what can you help me with?", streamed reply, Cartesia audio frames, `assistant_audio_end` |
 | Fallback behaviour without a key | Session continues on Deepgram with no user-visible error |
 
-The invalid-key probe proves the URL, auth header and error parsing are
-correct against the live service. It does not prove transcription quality;
-that needs a real key.
+Live Sarvam transcription, `scripts/sarvam_stt_smoke.py`, Cartesia-synthesized
+merchant sentences streamed as 16 kHz PCM:
 
-### Not verified yet
+| Language | Final transcript | Partials | Result |
+| --- | --- | --- | --- |
+| `hi-IN` | मेरा पेटीएम क्यूआर कोड काम नहीं कर रहा है, कृपया मदद करें। | 67 | PASS |
+| `kn-IN` | ನನ್ನ ಪೇಟಿಎಂ ಕ್ಯೂಆರ್ ಕೋಡ್ ಕೆಲಸ ಮಾಡುತ್ತಿಲ್ಲ, ದಯವಿಟ್ಟು ಸಹಾಯ ಮಾಡಿ. | 69 | PASS |
+| `en-IN` | My Paytm QR code is not working. Can you help me? | 37 | PASS |
+| `auto` (Hindi audio) | मेरा पेटीएम क्यूआर कोड काम नहीं कर रहा है, कृपया मदद करें। | 55 | PASS, detected `hi-IN` |
 
-- Real Sarvam transcripts in Hindi, Kannada and English.
-  `SARVAM_API_KEY` is not present in `backend/.env` or the process
-  environment. Once the owner adds it, run from `backend/`:
+`auto` mode returned `language: hi-IN` on the final event, which is what drives
+the reply language. Early partials in `auto` mode showed code-mixed output
+("paytm QR code cord ...") before converging on the correct final, which is
+expected from Sarvam's code-mixed handling.
 
-  ```
-  .venv\Scripts\python.exe scripts\sarvam_stt_smoke.py --language hi-IN --sample
-  .venv\Scripts\python.exe scripts\sarvam_stt_smoke.py --language kn-IN --sample
-  .venv\Scripts\python.exe scripts\sarvam_stt_smoke.py --language en-IN --sample
-  ```
+Locked-language turns through the full socket (Cartesia audio in, Sarvam
+transcript, Groq reply, Cartesia audio out):
 
-  Each run synthesizes a Paytm support sentence with Cartesia in the target
-  language, streams it to Sarvam, and prints partials plus the final
-  transcript. Exit code 0 means a final transcript arrived.
-- Browser microphone check (owner).
-- Barge-in in the browser with Sarvam active (owner). Silero VAD and the
-  provisional-interruption watchdog are unchanged, and their unit tests still
-  pass, but the real path has only been exercised with Deepgram so far.
+| Language | Sarvam transcript | Assistant reply | Result |
+| --- | --- | --- | --- |
+| `hi-IN` | मेरा पेटीएम क्यूआर कोड काम नहीं कर रहा है, कृपया मदद करें। | Hindi, numbered troubleshooting steps | PASS |
+| `kn-IN` | ನನ್ನ ಪೇಟಿಎಂ ಕ್ಯೂಆರ್ ಕೋಡ್ ಕೆಲಸ ಮಾಡುತ್ತಿಲ್ಲ, ದಯವಿಟ್ಟು ಸಹಾಯ ಮಾಡಿ. | Kannada, troubleshooting steps | PASS |
+
+Both turns sent `language_changed` before the transcript and produced audio
+frames through `assistant_audio_end`. Observation for Phase 2: the general
+system prompt still answers in written style (numbered Markdown lists), which
+reads poorly over voice. Prompt and persona work belongs to the telecalling
+phase.
+
+### Fix found during live verification
+
+Sarvam's interim transcripts sometimes begin with a stray quote character
+(`"`, `"'`) picked up before speech onset. Finals are post-processed by the
+server and were clean, but the UI receives partials. `clean_partial()` in
+`backend/app/services/stt/sarvam.py` trims quote characters from partials
+only; two tests cover it. After the fix the observed partials started at
+`Hello` with no artifacts.
+
+### Still to check in the browser (owner)
+
+- Live microphone input in Hindi, Kannada and English, including the reply
+  language.
+- Barge-in with Sarvam active. Silero VAD and the provisional-interruption
+  watchdog are unchanged and their unit tests pass, but the real barge-in
+  path has only been exercised with Deepgram so far.
 
 ### Docs vs brief, recorded
 
@@ -389,7 +411,9 @@ that needs a real key.
 | Acceptance item | Status |
 | --- | --- |
 | Sarvam is the configured STT provider | Pass |
-| Hindi, Kannada, English codes accepted end to end | Pass in code and tests; live audio pending key |
+| Hindi, Kannada, English transcription | Pass (live, all three languages) |
+| Language lock and `auto` detection | Pass (live) |
+| Hindi and Kannada replies via TTS | Pass (live) |
 | Silero VAD still drives barge-in | Pass (unchanged, tests green) |
 | Fallback Sarvam → Deepgram → Whisper | Pass (Deepgram path exercised live; Whisper path unchanged from Phase 0) |
 | TTS behind an interface, per-request language | Pass |
