@@ -155,7 +155,7 @@ class Settings:
 
     SARVAM_STT_SILENCE_MS: int = int(os.getenv(
         "SARVAM_STT_SILENCE_MS",
-        "500",
+        "350",  # fix 10.3: was 500; shorter wait = faster end-of-speech detection
     ))
 
     SARVAM_STT_MIN_SPEECH_MS: int = int(os.getenv(
@@ -215,7 +215,7 @@ class Settings:
 
     VOICE_MAX_TOKENS: int = int(os.getenv(
         "VOICE_MAX_TOKENS",
-        "320",
+        "200",  # fix 10.3: was 320; shorter replies finish sooner, keep LLM_REASONING_EFFORT=low
     ))
 
     # Spoken replies: aim for the soft limit, allow one more sentence when it

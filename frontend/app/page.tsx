@@ -214,7 +214,7 @@ export default function HomePage() {
           <section className="landing-proof" aria-label="Assistant capabilities">
             <div><strong>Interrupt without losing the thread</strong><p>The assistant pauses, handles the side question, and resumes from the right place.</p></div>
             <div><strong>Bring any working context</strong><p>PDF, CSV, or JSON changes the assistant&apos;s role while provenance keeps answers honest.</p></div>
-            <div><strong>Adapt to the human signal</strong><p>Local emotional cues make explanations calmer, clearer, and better timed.</p></div>
+            <div><strong>Ground answers in your documents</strong><p>Add a price list, policy or FAQ and the assistant answers from it, citing the source.</p></div>
           </section>
 
           <section className="demo-section" id="demo-sources">
@@ -299,7 +299,6 @@ export default function HomePage() {
                   <div><span className="status-dot" data-status={voice.connected ? "ready" : "idle"} /><span>Connection</span><strong>{voice.connected ? "Live" : "Offline"}</strong></div>
                   <div><span className="status-dot" data-status={voice.callLanguage.locked ? "ready" : "degraded"} /><span>Language</span><strong>{voice.callLanguage.display}</strong></div>
                   <div><span className="status-dot" data-status={voice.sttProvider === "deepgram" ? "ready" : "degraded"} /><span>Transcription</span><strong>{voice.sttProvider}</strong></div>
-                  <div><span className="status-dot" data-status={voice.emotion.status === "ready" ? "ready" : "loading"} /><span>Emotion</span><strong>{voice.emotion.displayLabel ?? voice.emotion.status}</strong></div>
                   <div><span className="status-dot" data-status={voice.activeDocument ? "ready" : "idle"} /><span>Knowledge</span><strong>{voice.activeDocument ? voice.activeDocument.domain_profile.domain : "General"}</strong></div>
                 </div>
               </section>

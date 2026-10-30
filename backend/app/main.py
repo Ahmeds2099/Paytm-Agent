@@ -52,6 +52,26 @@ async def startup_event():
             name="phrase-cache-warm",
         )
 
+    # Fix 10.3: pre-warm the Groq connection pool so the first real merchant
+    # turn does not pay the ~7 s cold-start penalty.
+    if settings.GROQ_API_KEY:
+        import asyncio
+        import logging as _logging
+
+        def _groq_warmup_sync():
+            try:
+                from app.services.llm import LLMService
+                _llm = LLMService()
+                _llm.generate([{"role": "user", "content": "hi"}])
+                _logging.getLogger("app.main").info("[GROQ] warm-up complete")
+            except Exception as exc:  # noqa: BLE001
+                _logging.getLogger("app.main").warning("[GROQ] warm-up skipped: %s", exc)
+
+        asyncio.create_task(
+            asyncio.to_thread(_groq_warmup_sync),
+            name="groq-warmup",
+        )
+
 try:
     QdrantService.initialize()
 except Exception:

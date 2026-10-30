@@ -1,9 +1,9 @@
 """Fixed spoken phrases for the language-selection step.
 
 Every line is short enough to be read aloud once and understood on a phone
-call. The greeting is deliberately trilingual because it runs before the
-merchant has chosen a language: it introduces the assistant, gives the
-recording notice, and asks the one question this phase exists to answer.
+call. The greeting is a single English line that asks the merchant which
+language they prefer. Retry remains trilingual so merchants who did not
+understand the English prompt still get a chance in their language.
 
 Keeping the text here (instead of inline in the handler) means the same string
 is used to pre-render the audio and to show it in the transcript, so the two
@@ -15,21 +15,10 @@ from __future__ import annotations
 # Phrase id -> language -> text.
 PHRASES: dict[str, dict[str, str]] = {
     "greeting": {
-        "hi-IN": (
-            "नमस्ते, पेटीएम वॉइस असिस्टेंट। "
-            "यह कॉल रिकॉर्ड हो सकती है। "
-            "हिंदी, कन्नड़ या अंग्रेज़ी?"
-        ),
-        "kn-IN": (
-            "ನಮಸ್ಕಾರ, ಪೇಟಿಎಂ ಧ್ವನಿ ಸಹಾಯಕ. "
-            "ಈ ಕರೆ ರೆಕಾರ್ಡ್ ಆಗಬಹುದು. "
-            "ಹಿಂದಿ, ಕನ್ನಡ ಅಥವಾ ಇಂಗ್ಲಿಷ್?"
-        ),
-        "en-IN": (
-            "Hello, Paytm voice assistant. "
-            "This call may be recorded. "
-            "Hindi, Kannada or English?"
-        ),
+        # Owner decision 2026-10-30: single English line only.
+        # The recording notice is intentionally dropped (owner's explicit choice).
+        # Retry stays trilingual so non-English speakers still get a second chance.
+        "en-IN": "Would you be comfortable in English, Hindi or Kannada?",
     },
     "confirm": {
         "hi-IN": (
@@ -81,9 +70,9 @@ LANGUAGE_NAMES: dict[str, str] = {
     "en-IN": "English",
 }
 
-# Order the trilingual greeting plays in. Hindi and Kannada first signals that
-# both are real options; English closes because it is the fallback.
-GREETING_ORDER: tuple[str, ...] = ("hi-IN", "kn-IN", "en-IN")
+# Owner decision 2026-10-30: greeting is now a single English line.
+# Retry phrases remain trilingual for merchants who did not understand English.
+GREETING_ORDER: tuple[str, ...] = ("en-IN",)
 
 
 def phrase_text(phrase_id: str, language: str) -> str:

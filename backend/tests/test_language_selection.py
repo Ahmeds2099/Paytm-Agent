@@ -145,24 +145,22 @@ class LanguageChangeTests(unittest.TestCase):
 
 
 class PhraseTableTests(unittest.TestCase):
-    def test_greeting_exists_in_all_three_languages(self):
-        self.assertEqual(set(PHRASES["greeting"]), {"hi-IN", "kn-IN", "en-IN"})
-        self.assertEqual(set(GREETING_ORDER), {"hi-IN", "kn-IN", "en-IN"})
-
-    def test_greeting_has_the_recording_notice(self):
-        markers = {
-            "hi-IN": "रिकॉर्ड",
-            "kn-IN": "ರೆಕಾರ್ಡ್",
-            "en-IN": "recorded",
-        }
-        for language, marker in markers.items():
-            with self.subTest(language=language):
-                self.assertIn(marker, PHRASES["greeting"][language])
+    def test_greeting_exists_in_english_only(self):
+        # Owner decision 2026-10-30: single English greeting.
+        self.assertEqual(set(PHRASES["greeting"]), {"en-IN"})
+        self.assertEqual(GREETING_ORDER, ("en-IN",))
 
     def test_greeting_offers_all_three_language_names(self):
-        self.assertIn("हिंदी", PHRASES["greeting"]["hi-IN"])
-        self.assertIn("ಕನ್ನಡ", PHRASES["greeting"]["kn-IN"])
-        self.assertIn("English", PHRASES["greeting"]["en-IN"])
+        # The English greeting must mention all three language options.
+        text = PHRASES["greeting"]["en-IN"]
+        self.assertIn("English", text)
+        self.assertIn("Hindi", text)
+        self.assertIn("Kannada", text)
+
+    def test_retry_remains_trilingual(self):
+        # Retry must exist in all three languages so non-English speakers
+        # get a second chance in their own script.
+        self.assertEqual(set(PHRASES["retry"]), {"hi-IN", "kn-IN", "en-IN"})
 
     def test_every_phrase_falls_back_to_english(self):
         for phrase_id in PHRASES:
@@ -181,11 +179,10 @@ class PhraseTableTests(unittest.TestCase):
 
     def test_required_clips_match_the_phrase_table(self):
         clips = required_clips("greeting")
+        # Only one English clip now (owner decision 2026-10-30).
         self.assertEqual(
             set(clips),
             {
-                ("greeting", "hi-IN"),
-                ("greeting", "kn-IN"),
                 ("greeting", "en-IN"),
             },
         )
