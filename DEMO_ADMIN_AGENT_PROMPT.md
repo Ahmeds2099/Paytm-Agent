@@ -112,24 +112,28 @@ scenario: soundbox_offline
 
 ---
 
-#### Persona 4 — Lakshmi Venkat (Refund Not Initiated)
+#### Persona 4 — Lakshmi Venkat (Refund Not Initiated) ⭐ HERO DEMO
 ```
 merchant_id: MID004
 name: Lakshmi Venkat
 business: Lakshmi Textiles, Chennai
-language: en-IN
 avatar: 🧵
 scenario: refund_pending
 ```
+**This is the hero demo scenario — make it the most polished, cleanest end-to-end flow.**  
 **Mock data:** TXN004 = completed ₹2,400, no refund yet  
 **Full conversation flow:**
-1. Agent greets.
-2. Lakshmi: "My customer paid ₹2,400 by mistake and wants a refund but I don't know how to do it."
-3. Agent: "I can initiate that refund for you right now. The transaction ID is TXN004 for ₹2,400 — is that correct?"
-4. Lakshmi: "Yes."
-5. Agent calls `trigger_refund(TXN004, 2400)` → returns `REF-TXN004-001, status: initiated`.
-6. Agent: "The refund of ₹2,400 has been initiated. Refund ID is REF-TXN004-001. Your customer will receive it within 5-7 business days."
-7. Agent: "Is there anything else?" → No → Call ends, logs as `resolved:refund_initiated`.
+1. Agent runs the normal language gate greeting: "Hello and welcome to Paytm. Would you be comfortable in English, Hindi or Kannada?"
+2. Lakshmi chooses English.
+3. Agent confirms in English and asks how it can help.
+4. Lakshmi: "My customer paid ₹2,400 by mistake and wants a refund but I don't know how to do it."
+5. Agent: "I can initiate that refund for you right now. The transaction ID is TXN004 for ₹2,400 — is that correct?"
+6. Lakshmi: "Yes."
+7. Agent calls `trigger_refund(TXN004, 2400)` → returns `REF-TXN004-001, status: initiated`.
+8. Agent: "The refund of ₹2,400 has been initiated. Refund ID is REF-TXN004-001. Your customer will receive it within 5-7 business days."
+9. Agent: "Is there anything else?" → Lakshmi: No → Agent closes warmly, logs as `resolved:refund_initiated`.
+
+**Demo tip:** This scenario has the clearest outcome — money back, happy merchant. Lead with this one in every presentation.
 
 ---
 
@@ -268,54 +272,50 @@ All gradients use blue tones. No purple, no generic grey. Remove all existing co
 
 ---
 
-### 3.2 Landing page redesign (frontend/app/page.tsx)
+### 3.2 Landing page update (frontend/app/page.tsx)
 
-**When no merchant is selected (initial state):**
+**IMPORTANT: Do NOT change the existing page layout or component structure.** The current landing page has a hero section, a feature/stats strip, and a document cards section. Keep all of that exactly as it is. Only change:
 
-Replace the current voice orb + connect button layout with:
+1. **All copy text** — replace every reference to the generic voice assistant with Paytm-specific content:
+   - Hero headline: `"Paytm Voice Teammate"` → subheadline: `"AI-powered outbound support for merchants. Speaks English, Hindi & Kannada."`
+   - Feature strip: `"Real-time STT"` → `"Instant Transcription"`, `"Emotion Aware"` → `"3 Languages"`, etc. — keep the same strip layout, just update the label text to reflect Paytm agent features (QR support, settlement queries, soundbox help, multilingual)
+   - Any `"Via"` branding → `"Paytm"`
+
+2. **Document cards section** → **Demo Persona cards section**:
+   - Replace the document upload cards / demo document cards with 6 merchant persona cards (same card grid layout as the existing document list)
+   - Each card shows: avatar emoji, merchant name, business name, issue label
+   - The "Upload Document" button becomes `"Start Demo Call"`
+   - The card data comes from `GET /demo/merchants`
+
+3. **"Start Agent" / "Connect" button behaviour change**:
+   - Currently clicking Connect starts the agent immediately.
+   - New behaviour: clicking Connect (or clicking a persona card) first opens a **persona picker modal** (a small overlay/sheet) that lists the 6 merchant cards.
+   - The user selects one persona → modal closes → **then** the agent connects as normal.
+   - The selected persona's `merchant_id` and `name` are stored in React state and shown in the session-signals panel ("Simulating: Lakshmi Venkat").
+   - After connecting, `session_init` is sent with only `client_id: merchant_id` — **do NOT pass `language`** (see Section 3.4).
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  [Paytm logo SVG]   Paytm Voice Teammate               │
-│  AI-powered merchant support · 24/7 · 3 languages       │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│   Choose who is calling:                                │
-│                                                         │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐               │
-│  │  🏪      │ │  👗      │ │  📱      │               │
-│  │ Ravi     │ │ Sunita   │ │ Farooq   │               │
-│  │ Kumar    │ │ Devi     │ │          │               │
-│  │ Kirana   │ │ Sarees   │ │Electricals│              │
-│  │ 🇮🇳 kn   │ │ 🇮🇳 hi   │ │ 🇮🇳 en   │               │
-│  │ QR issue │ │Settlement│ │ Soundbox │               │
-│  └──────────┘ └──────────┘ └──────────┘               │
-│                                                         │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐               │
-│  │  🧵      │ │  🏬      │ │  💄      │               │
-│  │ Lakshmi  │ │ Amit     │ │ Priya    │               │
-│  │ Textiles │ │ Sharma   │ │ Nair     │               │
-│  │ 🇮🇳 en   │ │ 🇮🇳 hi   │ │ 🇮🇳 en   │               │
-│  │ Refund   │ │Escalation│ │ Opt out  │               │
-│  └──────────┘ └──────────┘ └──────────┘               │
-│                                                         │
-│        Simulate an inbound merchant call ↑              │
-└─────────────────────────────────────────────────────────┘
+Persona picker modal layout:
+┌──────────────────────────────────────────────┐
+│  Choose who is calling                    ✕  │
+│  The agent will load this merchant's data     │
+├──────────────────────────────────────────────┤
+│  ┌────────┐ ┌────────┐ ┌────────┐           │
+│  │  🧵   │ │  🏪   │ │  👗   │           │
+│  │Lakshmi│ │  Ravi │ │Sunita │           │
+│  │Refund ★│ │QR issue│ │Settle │           │
+│  └────────┘ └────────┘ └────────┘           │
+│  ┌────────┐ ┌────────┐ ┌────────┐           │
+│  │  📱   │ │  🏬   │ │  💄   │           │
+│  │Farooq │ │  Amit │ │ Priya │           │
+│  │Soundbox│ │Escalate│ │Opt-out│           │
+│  └────────┘ └────────┘ └────────┘           │
+│                                              │
+│  ★ = Recommended: start here for a demo     │
+└──────────────────────────────────────────────┘
 ```
 
-Each card shows:
-- Avatar emoji (large, centered)
-- Merchant name (bold)
-- Business name (muted)
-- Language flag + language code
-- Issue preview (e.g. "QR issue", "Settlement delay")
-- Hover: card lifts, blue border glow, subtle scale
-- Click: transitions to active call view
-
-**Hero section above the cards:**
-- Left: Paytm logo + product name + tagline
-- Right: 3 stat pills → `3 Languages` · `6 Demo Scenarios` · `Live AI Agent`
-- Background: soft gradient from `--paytm-light-blue` to white
+Lakshmi (Persona 4, refund ⭐) is highlighted as the recommended starting persona.
 
 ---
 
@@ -359,29 +359,24 @@ Remove the demo document selector — it's not relevant for the merchant agent.
 
 ---
 
-### 3.4 Session init on merchant select
+### 3.4 Session init on merchant select — LANGUAGE GATE MUST STILL RUN
 
-When a merchant card is clicked:
-1. Send `session_init` with:
-   - `client_id`: merchant's `merchant_id`
-   - `language`: merchant's language code (this locks the language immediately, skipping the greeting gate — the agent already knows who is calling)
-   - `merchant_profile`: JSON with name, business, scenario, phone
-2. Frontend stores selected merchant in React state.
-3. Transition animation: card expands/fades into call view.
-4. Agent speaks a language-specific opening (different from the language-selection greeting):
-   - en-IN: "Hello Ravi! This is Paytm support calling. I can see you've been having an issue with your QR code. Can you tell me more about what's happening?"
-   - hi-IN: "नमस्ते! यह Paytm support से call है..."
-   - kn-IN: "ನಮಸ್ಕಾರ! ಇದು Paytm support..."
-   - These are pre-scripted opening phrases, not from the language gate.
+**CRITICAL: Do NOT pass `language` in session_init when a persona is selected.**  
+The language gate greeting must run as normal for every persona — the whole point is to demonstrate the multilingual capability. The merchant (person demoing) chooses the language live during the call, just like a real merchant would.
 
-Add these phrases to `phrases.py`:
-```python
-"demo_open_qr": { "en-IN": "...", "hi-IN": "...", "kn-IN": "..." }
-"demo_open_settlement": { "en-IN": "...", ... }
-"demo_open_soundbox": { "en-IN": "...", ... }
-"demo_open_refund": { "en-IN": "...", ... }
-"demo_open_general": { "en-IN": "...", ... }
-```
+When a merchant persona is selected and Connect is pressed:
+1. Send `session_init` with ONLY:
+   - `client_id`: the merchant's `merchant_id` (e.g. `"MID004"`)
+   - `merchant_profile`: JSON metadata `{ name, business_name, scenario_id, avatar }` — for context injection only
+   - **Do NOT include `language` or `language_code`**
+2. The agent runs the normal language gate: speaks the greeting "Hello and welcome to Paytm. Would you be comfortable in English, Hindi or Kannada?"
+3. The demo user (acting as the merchant) responds with a language.
+4. After the language locks, the agent knows the persona context (from `merchant_profile` in session metadata) and proceeds to ask how it can help.
+5. Frontend stores selected persona in React state and shows it in the session-signals panel: `"Simulating: Lakshmi Venkat · MID004"`.
+
+This means the language shown on the persona cards is a **hint** ("this persona typically calls in English/Hindi/Kannada") not a constraint. Remove any `language_code` badge from the persona cards — replace with `"Tip: try Hindi"` or just remove the language hint entirely to keep it clean.
+
+**The scenario-specific system prompt context IS injected** (so the AI knows this merchant's issue) but the language is always chosen live by the demo participant.
 
 ---
 
@@ -565,28 +560,33 @@ frontend/lib/voice/websocket.ts  — no changes needed (tool_call, escalation al
 5. **Backend tests** — Add tests for raise_ticket, ticket spoken summaries, and call log writes. Run all 157+ tests.
 6. **Paytm CSS** — Replace color system in globals.css, verify no broken styles.
 7. **PaytmLogo + MerchantCard components** — Create isolated components first.
-8. **Landing page** — Fetch /demo/merchants, render cards, wire click → session_init with merchant profile.
-9. **Active call view** — Left panel (merchant profile) + right panel (existing voice UI).
-10. **Demo opening phrases** — Wire scenario-specific opening phrase on session_init.
-11. **AdminDashboard component** — Build with mock data first, then wire to /admin/calls polling.
+8. **Landing page copy + persona cards** — Keep existing layout. Update all copy. Replace document cards with 6 persona cards fetched from `GET /demo/merchants`.
+9. **Persona picker modal** — Wire Connect button to open modal. On persona select: store in state, close modal, connect, send `session_init` with ONLY `client_id` + `merchant_profile`. Do NOT pass `language`.
+10. **Session-signals panel** — Show "Simulating: [Name] · [MID]" after persona is selected.
+11. **AdminDashboard component** — Build with mock data first, then wire to /admin/calls polling every 5s.
 12. **TypeScript check** — `npx tsc --noEmit` must be clean.
-13. **Full demo run** — Walk through all 6 scenarios end-to-end in the browser. Confirm each reaches its expected outcome.
+13. **Full demo run** — Start with Lakshmi (hero ⭐). Persona picker → select Lakshmi → agent greets in English/Hindi/Kannada (your choice) → mention refund → confirm outcome → verify Admin row shows `resolved:refund_initiated`.
 14. **Update docs** — BUILD_LOG.md entry, context.md session notes, HANDOFF.md.
-15. **Commit** — Single commit: `feat: demo scenarios + merchant login + admin dashboard`.
+15. **Commit** — Single commit: `feat: demo scenarios + merchant persona picker + admin dashboard`.
 
 ---
 
-## 8. Acceptance criteria (how to know it's done)
+## 8. Acceptance criteria (how to know it’s done)
 
-- [ ] All 6 merchant cards appear on the landing page with correct colors and labels.
-- [ ] Clicking Ravi Kumar starts a call in Kannada, greets him by name, and eventually speaks a tool result in Kannada.
-- [ ] Clicking Amit Sharma ends with an escalation banner and an ⚠️ row in the Admin tab.
-- [ ] Clicking Priya Nair ends the call in < 30 seconds and logs OPT-OUT in Admin.
-- [ ] Admin tab shows all completed calls with correct outcome colors and no attention badge for resolved calls.
+- [ ] Existing landing page layout preserved — only copy text and the cards section changed.
+- [ ] All 6 persona cards appear in the persona picker modal with avatars, names, and issue labels.
+- [ ] Lakshmi Venkat (Persona 4) is visually highlighted as the recommended (⭐) starting persona.
+- [ ] Pressing Connect opens the persona picker modal — selecting a persona closes it and starts the call.
+- [ ] `session_init` sent with `client_id` only — NO `language` field — for every persona.
+- [ ] Agent always runs the language gate greeting first ("Hello and welcome to Paytm...") regardless of which persona is selected.
+- [ ] Lakshmi hero demo: choose English → mention refund → agent calls trigger_refund → speaks confirmation → Admin shows `resolved:refund_initiated`.
+- [ ] Amit escalation demo: choose Hindi → complain twice → escalation banner fires → Admin shows ⚠️ ATTENTION.
+- [ ] Priya opt-out demo: say “remove my number” → call ends < 30s → Admin shows OPT-OUT badge.
+- [ ] Admin tab shows all calls with correct status dot colours and outcome labels.
+- [ ] Session signals panel shows “Simulating: [Name] · [MID]” after persona is selected.
 - [ ] `tsc --noEmit` is clean.
-- [ ] `python -m unittest discover -s tests` passes all tests (new count ≥ 170).
-- [ ] No console errors in the browser.
-- [ ] Page uses ONLY Paytm blue / navy / white — zero purple, orange, or generic grey.
+- [ ] All tests pass (new count ≥ 170).
+- [ ] No browser console errors. Page uses ONLY Paytm blue / navy / white — zero purple or generic grey.
 
 ---
 
@@ -594,7 +594,7 @@ frontend/lib/voice/websocket.ts  — no changes needed (tool_call, escalation al
 
 - The WebSocket audio pipeline internals (PCM encoding, barge-in, interruption logic).
 - The STT/TTS provider code (`sarvam.py`, `deepgram.py`, `cartesia.py`).
-- The language gate logic (`language_gate.py`) — though the demo skips it by pre-locking via session_init.
+- The language gate logic (`language_gate.py`) — it must run for every call including demo personas.
 - The 157 existing tests — all must still pass.
 - `backend/.env` — never commit secrets.
 
@@ -602,8 +602,10 @@ frontend/lib/voice/websocket.ts  — no changes needed (tool_call, escalation al
 
 ## 10. Notes on demo scenario behavior
 
-- The demo scenarios define the **expected happy path**. The AI is not strictly scripted — it will respond naturally. The seed data ensures the tool calls return the right fixture so the AI can articulate the correct outcome.
-- The `demo_scenarios.py` module provides a lookup: `get_scenario(merchant_id)` → scenario metadata. Audio.py uses this on session_init to speak the correct opening phrase and inject scenario context into the system prompt.
-- The system prompt for demo calls should include: `"You are assisting {merchant_name} from {business_name}. Their registered issue is {scenario_label}. Use the tools available to look up their account and resolve the issue. After resolving, confirm the resolution and close the call warmly."`
-- For Persona 5 (Amit — escalation), the conversation must reach escalation naturally. The seed data can include `prior_complaint_count: 2` so the intent classifier immediately treats the first complaint as a `repeat_complaint`.
-- For Persona 6 (Priya — opt-out), the opening phrase should NOT mention her issue — just a neutral greeting. Her first utterance triggers opt_out classification.
+- The demo scenarios define the **expected happy path**. The AI is not strictly scripted — it responds naturally. The seed data ensures tool calls return the right fixture so the AI can articulate the correct outcome.
+- The `demo_scenarios.py` module provides a lookup: `get_scenario(merchant_id)` → scenario metadata. Audio.py uses this on session_init to inject scenario context into the system prompt AFTER the language gate locks.
+- System prompt injection after language lock: `"You are calling {merchant_name} from {business_name}. Their registered concern is: {scenario_label}. Use available tools to look up their account and resolve their issue. After resolving, confirm the resolution warmly and close the call."`
+- **Language is NEVER pre-loaded from the persona** — the greeting runs first, the merchant picks their language, then the scenario context is used to guide the conversation in that language.
+- For Persona 5 (Amit — escalation): seed data includes `prior_complaint_count: 2` so the intent classifier immediately treats the first complaint as `repeat_complaint` and auto-escalates on the second message.
+- For Persona 6 (Priya — opt-out): system prompt should NOT mention her issue — just a neutral greeting. Her first utterance triggers opt_out classification immediately.
+- **Hero demo (Persona 4, Lakshmi)**: make this the default pre-selected persona in the picker modal. The ⭐ star badge draws attention to it. During any demo presentation, lead with this scenario first — it shows the complete happy path: greeting → language choice → problem stated → tool called → refund initiated → confirmation → warm close.
