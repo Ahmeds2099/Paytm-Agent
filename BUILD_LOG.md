@@ -891,6 +891,8 @@ limit-change function and section 7.5 says to hand those to a human.
 
 ## 2026-10-30 - Phase 3: ask-and-lock language selection
 
+Commit: $hash.
+
 ### Objective
 
 The agent must no longer detect language by itself. Every call starts with a
