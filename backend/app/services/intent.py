@@ -126,15 +126,25 @@ TOPIC_DESCRIPTIONS = {
 _LANGUAGE_PATTERNS = (
     (
         "hi-IN",
-        re.compile(r"\bhindi\b|हिंदी|हिन्दी|ಹಿಂದಿ", re.I),
+        re.compile(
+            r"(?<![a-z])(?:hindi|hindhi|hindee)(?![a-z])|हिंदी|हिन्दी|ಹಿಂದಿ",
+            re.I,
+        ),
     ),
     (
         "kn-IN",
-        re.compile(r"\bkannada\b|ಕನ್ನಡ|कन्नड़|कन्नड", re.I),
+        re.compile(
+            r"(?<![a-z])(?:kannada|kannad|kannadam)(?![a-z])|ಕನ್ನಡ|कन्नड़|कन्नड",
+            re.I,
+        ),
     ),
     (
         "en-IN",
-        re.compile(r"\benglish\b|अंग्रेजी|इंग्लिश|ಇಂಗ್ಲಿಷ್|ಆಂಗ್ಲ", re.I),
+        re.compile(
+            r"(?<![a-z])(?:english|inglish|angrezi|angreji)(?![a-z])|"
+            r"अंग्रेजी|इंग्लिश|ಇಂಗ್ಲಿಷ್|ಆಂಗ್ಲ",
+            re.I,
+        ),
     ),
 )
 

@@ -45,6 +45,7 @@ export class VoiceSocket {
     onVoiceError?: (error: VoiceError) => void;
     onEmotionUpdate?: (emotion: EmotionUpdate) => void;
     onSessionRestored?: (messageCount: number, memoryCount: number) => void;
+    onLanguageChanged?: (language: string, locked: boolean, display: string) => void;
     onConnected?: (sessionId: string) => void;
     onVoiceState?: (state: VoiceState) => void;
     onPipelineStage?: (stage: PipelineStage) => void;
@@ -146,6 +147,13 @@ export class VoiceSocket {
                     this.onSessionRestored?.(
                         Number(message.message_count ?? 0),
                         Number(message.memory_count ?? 0),
+                    );
+                    break;
+                case "language_changed":
+                    this.onLanguageChanged?.(
+                        String(message.language ?? "auto"),
+                        Boolean(message.locked),
+                        String(message.display ?? message.language ?? "Auto"),
                     );
                     break;
                 case "voice_state":

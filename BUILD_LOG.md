@@ -717,41 +717,37 @@ so nobody silently reverts them, and so Phase 4 knows where it stands.
 
 ### What comes next, in the brief's order
 
-**Phase 3 - language selection at the start of every call.** Not started.
-Checklist from brief section 6:
+**Phase 3 - language selection at the start of every call.** Done (2026-10-30,
+see the Phase 3 section at the end of this log). Checklist from brief section 6:
 
-- [ ] Greeting: one short line in Hindi, Kannada and English that introduces
+- [x] Greeting: one short line in Hindi, Kannada and English that introduces
       the assistant, says the call may be recorded, and asks which language the
       merchant is comfortable in.
-- [ ] Classifier returns `language_choice` with a value in `{hi, kn, en}` for
+- [x] Classifier returns `language_choice` with a value in `{hi, kn, en}` for
       the language name in any of the three scripts and for common spellings.
-      A single-word answer must work. The rule fast path in
-      `backend/app/services/intent.py` already extracts all of this; Phase 3
-      needs to consume `slots["language"]` and act on it.
-- [ ] Confirm once in the chosen language ("Okay, we will continue in
+      A single-word answer must work.
+- [x] Confirm once in the chosen language ("Okay, we will continue in
       Kannada"), then persist `session.language`.
-- [ ] Use the locked language for speech to text, the system prompt and the TTS
-      language field for the rest of the call. The three inputs already exist:
-      `session.effective_language`, `build_voice_prompt(language)` and the
-      Cartesia `language=` argument.
-- [ ] Unclear answer: ask once more, slowly and simply. If still unclear,
+- [x] Use the locked language for speech to text, the system prompt and the TTS
+      language field for the rest of the call.
+- [x] Unclear answer: ask once more, slowly and simply. If still unclear,
       default to English and offer a human.
-- [ ] Change of mind: if the merchant explicitly names another language later,
-      update the language. Never switch on its own. Explicit requests already
-      classify as `language_choice`, so this is a wiring job, not a new model.
-- [ ] Pre-generate the greeting and fixed phrases once per language and cache
-      them as audio files, per brief section 9. Nothing is cached yet; every
-      turn currently synthesizes fresh audio.
-- [ ] Acceptance: all three languages end to end, the unclear path works, and
-      the language never changes by itself.
+- [x] Change of mind: if the merchant explicitly names another language later,
+      update the language. Never switch on its own.
+- [x] Pre-generate the greeting and fixed phrases once per language and cache
+      them as audio files, per brief section 9.
+- [x] Acceptance: all three languages end to end, the unclear path works, and
+      the language never changes by itself. Proven live by
+      `scripts/language_gate_probe.py`, 8/8 checks.
 
-Likely files: `backend/app/services/voice/session.py` (a `language_locked`
-flag), `backend/app/services/voice/handlers/audio.py` (greeting, gate,
-`language_changed`), `backend/app/services/voice/language.py` (accept
-single-word and cross-script language names), `backend/app/core/prompts.py`
-(trilingual greeting + confirmation line), a new
-`backend/app/services/voice/prerender.py` for the audio cache, and the frontend
-language control so the demo can also select manually.
+Files: `backend/app/services/voice/session.py` (`language_locked`,
+`language_attempts`), `backend/app/services/voice/handlers/audio.py` (greeting,
+gate, `language_changed`, cached-clip speaker),
+`backend/app/services/voice/language_gate.py` (pure decisions),
+`backend/app/services/voice/phrases.py` (fixed lines),
+`backend/app/services/voice/prerender.py` (PCM cache), `intent.py` (language
+aliases and code-mixed matching), and the frontend `language_changed` event
+with a Language row in the session signals.
 
 **Phase 4 - Paytm agent.** Not started. From the brief: conversation states,
 delegation protocol with a sub agent, a separate `mock_paytm/` FastAPI service
@@ -890,3 +886,250 @@ limit-change function and section 7.5 says to hand those to a human.
 - `ticket_request` and `device_offer_interest` are commitments. The brief
   requires verbal confirmation before `create_support_ticket` or
   `send_offer_link`, so Phase 4 must gate them on `confirmation_yes`.
+
+---
+
+## 2026-10-30 - Phase 3: ask-and-lock language selection
+
+### Objective
+
+The agent must no longer detect language by itself. Every call starts with a
+trilingual greeting, asks which language the merchant wants, locks the answer,
+and uses that language for speech to text, the reply model and text to speech
+for the rest of the call. Brief section 6.
+
+### Call flow now
+
+1. The browser opens `/ws/voice` and sends `session_init` (no language).
+2. The backend plays the pre-rendered greeting, one clip per language, in the
+   order Hindi, Kannada, English. Each line introduces the assistant, gives the
+   recording notice, and names the three options.
+3. Until the merchant answers, `session.language` stays `auto` so Sarvam can
+   understand an answer in any of the three languages, and every final
+   transcript goes to the language gate instead of the reply model.
+4. On a clear answer the gate locks the language, switches the Sarvam stream,
+   sends `language_changed` with `locked: true`, and speaks a confirmation in
+   the chosen language. That confirmation also invites the first question, so
+   the call does not stall.
+5. After the lock, every turn goes to the normal reply path with
+   `session.effective_language` as the language for the prompt and Cartesia.
+6. A later explicit request for another language changes it and speaks the
+   short "changed" line. Nothing else can move the call off the chosen
+   language.
+
+Barge-in works throughout: speaking while the greeting or a confirmation is
+playing interrupts it within about 100 ms and the new turn is handled
+immediately. The probe relies on this.
+
+### Gate decisions
+
+`backend/app/services/voice/language_gate.py` is pure and unit-tested:
+
+| action | when | what the handler does |
+| --- | --- | --- |
+| `lock` | an explicit language name, any script, any common spelling, alone or in a short turn | lock and speak `confirm` in that language |
+| `retry` | unclear on the first answer | speak `retry` in all three languages, remember one attempt |
+| `default` | unclear again | lock English, speak the English fallback that also offers a human |
+| `opt_out` | "stop calling me" etc. while still choosing | speak the opt-out line, mark `metadata["opted_out"]` |
+| `human_request` | "talk to a human" while still choosing | speak the human-request line |
+
+Two attempts total (`MAX_LANGUAGE_ATTEMPTS = 2`). `VOICE_LANGUAGE_ON_FAILURE`
+sets the fallback, default `en-IN`; `auto` is rejected as a fallback because it
+would reintroduce self-switching.
+
+Explicitness is the guard against auto-switching: `detect_language_choice`
+reuses the rule classifier, which only treats a language word as a choice when
+the turn is a single word / up to six words, or when a word like *speak*,
+*talk* or *language* is next to it. "My shop board is written in Kannada, when
+will my settlement come?" is not a choice. That exact sentence is in the live
+probe.
+
+### Step-by-step, in the order it was built
+
+1. **State.** `VoiceSession` gained `language_locked: bool` and
+   `language_attempts: int`. `effective_language` already preferred
+   `session.language` over `detected_language`, so no change was needed there;
+   `detected_language` now only updates for logs.
+2. **Fixed phrases.** New `backend/app/services/voice/phrases.py` holds every
+   spoken line per language: `greeting`, `confirm`, `changed`, `retry`,
+   `default_english`, `opt_out`, `human_request`, plus `LANGUAGE_NAMES` and
+   `GREETING_ORDER = ("hi-IN", "kn-IN", "en-IN")`. Text lives here so the
+   cached audio and the transcript text cannot drift.
+3. **Pre-render cache.** New `backend/app/services/voice/prerender.py`:
+   Cartesia returns a WAV container, `strip_wav` extracts the raw
+   `pcm_f32le` data chunk, and the bytes are cached under
+   `backend/.cache/voice_phrases/<phrase>.<language>.<hash>.pcm`. The hash
+   covers text, language, model and voice id, so editing a line re-renders it.
+   `PhraseCache.ensure` renders on first use behind a thread lock;
+   `warm_phrase_cache` renders all 19 clips. `.cache/` is already git-ignored.
+4. **Startup warm.** `backend/app/main.py` queues `warm_phrase_cache` in a
+   worker thread on startup when `VOICE_ASK_LANGUAGE` and a Cartesia key are
+   present. Log line on a warm start:
+   `phrase cache warm: 19/19 ready in ...\.cache\voice_phrases`.
+5. **Speaking cached audio.** `AudioHandler._schedule_phrases` takes
+   `[(phrase_id, language), ...]`, resolves PCM (rendering if needed), and
+   emits the same item stream as live TTS: token, segment start, audio, segment
+   end, then stream/audio end. Audio is chunked into 100 ms frames with a
+   cancellation check per frame, which is what keeps barge-in fast. If the
+   provider is down the same text falls back to `speak_only`.
+6. **Greeting trigger.** In `handle_control` -> `session_init`, after the
+   session-restore reply, the handler schedules the three greeting clips once
+   per session (`metadata["greeted"]`). A `session_init` that names a language
+   (used by the probes and available to a future picker) locks it and skips the
+   greeting.
+7. **Gate wiring.** In `_handle_transcript_event`, right after the transcript
+   event is sent:
+   - before the lock: stop any speech, run `_handle_language_gate`, return;
+   - after the lock: `detect_language_change`; if the merchant explicitly asks
+     for another language, `_apply_language(changed=True)` and return.
+   The old duplicate "interrupt if speaking" block now calls
+   `_stop_active_speech`, shared with the gate.
+8. **`_set_session_language`** gained `lock: bool`. It now always sends
+   `language_changed` (including when the code did not change) with
+   `language`, `display` and `locked`, and returns a bool.
+9. **Intent aliases.** `_LANGUAGE_PATTERNS` in `intent.py` accept `hindhi`,
+   `hindee`, `kannad`, `kannadam`, `inglish`, `angrezi`, `angreji`. The Latin
+   alternatives use `(?<![a-z])` / `(?![a-z])` instead of `\b`; a live Sarvam
+   transcript came back as `Kannadaದಲ್ಲಿ ಮಾತನಾಡಿ`, where a trailing `\b` fails
+   because the next character is a Kannada letter. This was a real bug found
+   by the probe, not a hypothetical.
+10. **Config and docs.** `VOICE_ASK_LANGUAGE` (default true),
+    `VOICE_LANGUAGE_ON_FAILURE` (default `en-IN`) and
+    `VOICE_PHRASE_CACHE_DIR` (default empty -> `backend/.cache/voice_phrases`)
+    were added to `config.py` and documented in `.env.example`.
+11. **Frontend.** `language_changed` is parsed into `onLanguageChanged`, the
+    hook exposes `callLanguage = { code, display, locked }`, and the live
+    session signals show a Language row that flips from "Not chosen" to
+    "Hindi" / "Kannada" / "English". `npx tsc --noEmit` is clean.
+
+### Audio durations, measured
+
+Cartesia with the configured voice, 16 kHz:
+
+| phrase | hi-IN | kn-IN | en-IN |
+| --- | --- | --- | --- |
+| greeting | 5.76 s | 6.40 s | 5.84 s |
+| confirm | 4.08 s | 4.56 s | 3.28 s |
+| retry | 3.12 s | 3.52 s | 4.00 s |
+| changed | 2.00 s | 2.96 s | 2.24 s |
+
+The three-part greeting is **18.0 s** if the merchant stays silent. That is the
+literal cost of saying the line in all three languages, and the first draft was
+27 s before the lines were tightened. It is acceptable because playback starts
+instantly from cache and a merchant who already knows their choice interrupts
+it within a few seconds; the probe does exactly that. If the owner wants it
+shorter still, the honest options are to drop the recording notice from two of
+the three lines (and repeat it in the confirmation instead) or to play only the
+chosen language, which would require guessing the language, so it was not done.
+
+### Files touched
+
+- `backend/app/services/voice/session.py` - lock and attempt fields.
+- `backend/app/services/voice/phrases.py` - new, all fixed lines.
+- `backend/app/services/voice/prerender.py` - new, WAV strip + PCM cache.
+- `backend/app/services/voice/language_gate.py` - new, pure gate.
+- `backend/app/services/voice/handlers/audio.py` - greeting, gate,
+  change-of-mind, cached-clip speaker, lock-aware `_set_session_language`.
+- `backend/app/services/intent.py` - language aliases, code-mixed matching.
+- `backend/app/core/config.py`, `.env.example` - three new settings.
+- `backend/app/main.py` - startup warm.
+- `backend/tests/test_language_selection.py` - new, 27 tests.
+- `backend/scripts/language_gate_probe.py` - new live acceptance probe.
+- `frontend/lib/voice/websocket.ts`, `frontend/hooks/usevoice.ts`,
+  `frontend/app/page.tsx` - `language_changed` and the Language row.
+
+### Evidence
+
+Unit and compile checks:
+
+```
+python -m unittest discover -s tests   ->  Ran 132 tests, OK   (was 106)
+python -m compileall -q app tests scripts -> exit 0
+python -c "import app.main"              -> import ok
+npx tsc --noEmit (frontend)              -> exit 0
+```
+
+Live probe, `backend/scripts/language_gate_probe.py`, against the real backend
+with Sarvam STT and Cartesia TTS. It synthesizes each answer with Cartesia and
+streams it into the microphone socket, so this is the same path the browser
+uses. Result: **8/8 pass**.
+
+```
+PASS  lock hindi            transcript "हिंदी में बात करें" -> language_changed hi-IN locked
+PASS  lock kannada          transcript "Kannadaದಲ್ಲಿ ಮಾತನಾಡಿ" -> language_changed kn-IN locked
+PASS  lock english          transcript "English please" -> language_changed en-IN locked
+PASS  unclear asks again    "I do not know." -> retry in hi, kn, en
+PASS  unclear then locks Kannada
+PASS  reply after the lock stays Kannada
+PASS  change of mind to English
+PASS  no switch on a stray language word
+```
+
+The post-lock Kannada reply, verbatim from the probe:
+
+```
+ಸೆಟಲ್ಮೆಂಟ್ ಸಾಮಾನ್ಯವಾಗಿ ವ್ಯವಹಾರ ದಿನದ ನಂತರ ಎರಡು ಕೆಲಸದ ದಿನಗಳಲ್ಲಿ ನಿಮ್ಮ ಖಾತೆಗೆ ಬರುತ್ತದೆ.
+ಇನ್ನಷ್ಟು ವಿವರ ಬೇಕೆ?
+```
+
+Kannada script, two sentences, one closing question. This is the specific
+failure the owner reported ("Kannada speech answered in English /
+transliterated") and it is now covered by an automated live check.
+
+The no-switch check sent: "My shop board is written in Kannada, when will my
+settlement come?" after locking English. Sarvam misheard "Kannada" as "Canada",
+which made the test weaker but still valid; the reply stayed English and no
+`language_changed` fired.
+
+### How to re-run
+
+```
+backend\.venv\Scripts\python.exe scripts\language_gate_probe.py
+```
+
+Needs the backend on 8100. It spends Cartesia and Groq credits; the Kannada
+reply turn is a real model call. Expect roughly two minutes.
+
+To force a re-render of the fixed lines (for example after editing
+`phrases.py`), delete `backend/.cache/voice_phrases/*` or just restart, since
+the hash includes the text.
+
+### Decisions worth remembering
+
+- The greeting is three separate clips, not one trilingual string. Cartesia
+  takes one language per request, so a single string would mispronounce two of
+  the three languages.
+- The gate consumes `language_choice` from the rule classifier rather than the
+  LLM. It is deterministic, instant, and cannot be talked out of a lock by a
+  clever sentence.
+- `language_attempts` counts total answers, not retries: the first unclear
+  answer sets it to 1, the second triggers the English default.
+- `opt_out` and `human_request` are honoured during language selection instead
+  of being swallowed by the gate. This matters: a merchant saying "stop
+  calling me" over a language question must be obeyed.
+- Phase 4 must treat `session.language_locked` as the source of truth for the
+  call language. Intent classification is still not wired into the voice path;
+  that remains Phase 4.
+
+### What remains for Phase 3
+
+- [ ] Owner browser check on `http://localhost:3100`: hear the trilingual
+      greeting, answer in each language, confirm the Language row flips, and
+      barge in mid-greeting.
+- [ ] Optional, not required by the brief: a visible language picker in the UI.
+      The backend already accepts `{"type": "session_init", "language": ...}`
+      and locks it, so a picker would only need a frontend control.
+
+### Gotchas added in this phase
+
+- The greeting starts on `session_init`. If audio does not play in the browser,
+  check that the AudioContext is not suspended (the page needs one user
+  gesture); the backend side is fine.
+- `scripts/voice_turn_probe.py` sends a language in `session_init`, which now
+  locks it and skips the greeting. That is intentional and still valid for
+  reply tests; use `language_gate_probe.py` to exercise the greeting and gate.
+- The phrase cache is PCM, not WAV, on purpose: the frontend treats every
+  binary frame as `Float32Array` samples. Do not store the container bytes.
+- `_schedule_phrases` runs Cartesia in a worker thread on a cache miss. A cold
+  first call after deleting the cache can add a couple of seconds per clip; the
+  startup warm avoids this in normal runs.

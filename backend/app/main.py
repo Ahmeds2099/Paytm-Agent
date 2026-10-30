@@ -40,6 +40,18 @@ async def startup_event():
     except ImportError:
         print("[MEMORY] psutil not installed, skipping memory logging")
 
+    # Phase 3: render the fixed phrases once, off the event loop, so the
+    # greeting and language prompts are ready before the first call.
+    if settings.VOICE_ASK_LANGUAGE and settings.CARTESIA_API_KEY:
+        import asyncio
+
+        from app.services.voice.prerender import warm_phrase_cache
+
+        asyncio.create_task(
+            asyncio.to_thread(warm_phrase_cache),
+            name="phrase-cache-warm",
+        )
+
 try:
     QdrantService.initialize()
 except Exception:

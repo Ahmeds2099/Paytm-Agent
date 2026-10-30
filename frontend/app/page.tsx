@@ -297,6 +297,7 @@ export default function HomePage() {
 
                 <div className="session-signals">
                   <div><span className="status-dot" data-status={voice.connected ? "ready" : "idle"} /><span>Connection</span><strong>{voice.connected ? "Live" : "Offline"}</strong></div>
+                  <div><span className="status-dot" data-status={voice.callLanguage.locked ? "ready" : "degraded"} /><span>Language</span><strong>{voice.callLanguage.display}</strong></div>
                   <div><span className="status-dot" data-status={voice.sttProvider === "deepgram" ? "ready" : "degraded"} /><span>Transcription</span><strong>{voice.sttProvider}</strong></div>
                   <div><span className="status-dot" data-status={voice.emotion.status === "ready" ? "ready" : "loading"} /><span>Emotion</span><strong>{voice.emotion.displayLabel ?? voice.emotion.status}</strong></div>
                   <div><span className="status-dot" data-status={voice.activeDocument ? "ready" : "idle"} /><span>Knowledge</span><strong>{voice.activeDocument ? voice.activeDocument.domain_profile.domain : "General"}</strong></div>

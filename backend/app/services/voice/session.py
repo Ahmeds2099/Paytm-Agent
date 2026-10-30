@@ -49,6 +49,14 @@ class VoiceSession:
     # Last language Sarvam detected while ``language`` was ``auto``.
     detected_language: str | None = None
 
+    # Phase 3: a language was chosen at the start of the call. While this is
+    # false, turns go to the language gate instead of the reply model, and
+    # ``detected_language`` never decides what is spoken.
+    language_locked: bool = False
+
+    # How many unclear answers the gate has seen. Two tries, then default.
+    language_attempts: int = 0
+
     whisper_pipeline: Any = None
 
     fallback_load_task: asyncio.Task | None = None

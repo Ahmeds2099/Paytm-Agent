@@ -118,6 +118,11 @@ export function useVoice() {
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState("");
     const [restoredState, setRestoredState] = useState("");
+    const [callLanguage, setCallLanguage] = useState<{
+        code: string;
+        display: string;
+        locked: boolean;
+    }>({ code: "auto", display: "Not chosen", locked: false });
     const [conversation, setConversation] = useState<ConversationTurn[]>([]);
     const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
     const [turnContexts, setTurnContexts] = useState<Record<string, TurnContext>>({});
@@ -546,6 +551,10 @@ export function useVoice() {
             }
         };
 
+        socket.onLanguageChanged = (language, locked, display) => {
+            setCallLanguage({ code: language, display, locked });
+        };
+
         setSTTProvider("initializing");
 
         const wsBase = apiBase.replace(/^http/, "ws");
@@ -746,6 +755,7 @@ export function useVoice() {
         uploading,
         uploadError,
         restoredState,
+        callLanguage,
         conversation,
         pipelineStages,
         turnContexts,

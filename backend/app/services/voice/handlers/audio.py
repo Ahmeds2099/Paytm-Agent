@@ -18,6 +18,12 @@ from app.services.voice.deepgram import (
     normalize_transcript,
 )
 from app.services.voice.language import normalize_language_code
+from app.services.voice.language_gate import (
+    detect_language_change,
+    resolve_language_gate,
+)
+from app.services.voice.phrases import GREETING_ORDER, LANGUAGE_NAMES, phrase_text
+from app.services.voice.prerender import phrase_audio
 from app.services.voice.resume_intent import (
     classify_interruption,
     classify_resume_intent,
@@ -390,7 +396,9 @@ class AudioHandler:
         session: VoiceSession,
         connection_manager: VoiceConnectionManager,
         value: str,
-    ) -> None:
+        *,
+        lock: bool = False,
+    ) -> bool:
         try:
             code = normalize_language_code(value)
         except ValueError as exc:
@@ -401,10 +409,26 @@ class AudioHandler:
                 message=str(exc),
                 recoverable=True,
             )
-            return
+            return False
+
+        display = LANGUAGE_NAMES.get(code, code)
+
+        if lock and code != "auto":
+            session.language_locked = True
+            session.language_attempts = 0
+            session.metadata["language"] = code
 
         if code == session.language:
-            return
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "language_changed",
+                    "language": code,
+                    "display": display,
+                    "locked": session.language_locked,
+                },
+            )
+            return True
 
         session.language = code
         session.detected_language = None
@@ -416,9 +440,11 @@ class AudioHandler:
                 {
                     "type": "language_changed",
                     "language": code,
+                    "display": display,
+                    "locked": session.language_locked,
                 },
             )
-            return
+            return True
 
         # The provider cannot reconfigure in place (Deepgram): reconnect.
         if session.stt_provider_name in self.STREAMING_PROVIDERS:
@@ -452,8 +478,11 @@ class AudioHandler:
             {
                 "type": "language_changed",
                 "language": code,
+                "display": display,
+                "locked": session.language_locked,
             },
         )
+        return True
 
     async def _load_whisper(
         self,
@@ -835,6 +864,235 @@ class AudioHandler:
         )
         session.set_voice_task(task, controller)
 
+    @staticmethod
+    def _cached_clip_items(controller, clips):
+        """Turn cached PCM clips into the same item stream live TTS produces."""
+
+        response_id = controller.response_id
+        # 100 ms of 16 kHz mono float32 audio. Chunking keeps barge-in snappy
+        # even mid-clip.
+        frame_bytes = 16000 * 4 // 10
+
+        for index, (text, pcm) in enumerate(clips):
+            if controller.cancelled:
+                return
+
+            segment_id = f"{response_id}:{index}"
+            yield {
+                "type": "token",
+                "response_id": response_id,
+                "data": text,
+            }
+            yield {
+                "type": "segment_start",
+                "data": {
+                    "response_id": response_id,
+                    "segment_id": segment_id,
+                    "text": text,
+                },
+            }
+            for offset in range(0, len(pcm), frame_bytes):
+                if controller.cancelled:
+                    return
+                yield {
+                    "type": "audio",
+                    "data": pcm[offset : offset + frame_bytes],
+                }
+            yield {
+                "type": "segment_end",
+                "data": {
+                    "response_id": response_id,
+                    "segment_id": segment_id,
+                },
+            }
+
+    def _schedule_phrases(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        clips: list[tuple[str, str]],
+    ) -> None:
+        """Speak fixed phrases from the pre-rendered cache.
+
+        ``clips`` is a list of ``(phrase_id, language)``. Anything missing from
+        the cache is rendered on first use; if the provider is unavailable the
+        same text is spoken through the normal TTS path so the call never goes
+        silent.
+        """
+
+        if not clips:
+            return
+
+        controller = self._new_controller()
+
+        async def runner() -> None:
+            current_task = asyncio.current_task()
+            try:
+                resolved: list[tuple[str, bytes]] = []
+                for phrase_id, language in clips:
+                    pcm = await asyncio.to_thread(
+                        phrase_audio,
+                        phrase_id,
+                        language,
+                    )
+                    if pcm:
+                        resolved.append(
+                            (phrase_text(phrase_id, language), pcm)
+                        )
+
+                if resolved:
+                    await self._emit_stream(
+                        session,
+                        connection_manager,
+                        controller,
+                        self._cached_clip_items(controller, resolved),
+                    )
+                    return
+
+                fallback_text = " ".join(
+                    phrase_text(phrase_id, language)
+                    for phrase_id, language in clips
+                ).strip()
+                if fallback_text:
+                    await self._emit_stream(
+                        session,
+                        connection_manager,
+                        controller,
+                        self.manager.speak_only(
+                            fallback_text,
+                            controller=controller,
+                            language=clips[-1][1],
+                        ),
+                    )
+            except Exception as exc:
+                await self._send_error(
+                    session,
+                    connection_manager,
+                    code="tts_failed",
+                    message=str(exc),
+                    recoverable=True,
+                )
+            finally:
+                if session.voice_task is current_task:
+                    session.voice_task = None
+
+        task = asyncio.create_task(
+            runner(),
+            name="voice-fixed-phrase",
+        )
+        session.set_voice_task(task, controller)
+
+    async def _stop_active_speech(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+    ) -> None:
+        if not session.has_active_response():
+            return
+        response_id = session.interrupt_active_response()
+        if response_id is not None:
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "interrupted",
+                    "response_id": response_id,
+                },
+            )
+
+    async def _apply_language(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        language: str,
+        *,
+        changed: bool = False,
+        speak: bool = True,
+    ) -> None:
+        """Lock (or change) the call language, then confirm in that language."""
+
+        await self._set_session_language(
+            session,
+            connection_manager,
+            language,
+            lock=True,
+        )
+        await self._stop_active_speech(session, connection_manager)
+        if not speak:
+            return
+        phrase_id = "changed" if changed else "confirm"
+        self._schedule_phrases(
+            session,
+            connection_manager,
+            [(phrase_id, session.effective_language or language)],
+        )
+
+    async def _handle_language_gate(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        transcript: str,
+    ) -> bool:
+        """Handle one answer before the language is known.
+
+        Returns ``True`` when the turn was consumed here and must not reach the
+        reply model.
+        """
+
+        result = resolve_language_gate(
+            transcript,
+            session.language_attempts,
+            default_language=settings.VOICE_LANGUAGE_ON_FAILURE,
+        )
+
+        if result.action == "lock":
+            await self._apply_language(
+                session,
+                connection_manager,
+                result.language or settings.VOICE_LANGUAGE_ON_FAILURE,
+            )
+            return True
+
+        if result.action == "retry":
+            session.language_attempts = result.attempts
+            await self._stop_active_speech(session, connection_manager)
+            self._schedule_phrases(
+                session,
+                connection_manager,
+                [("retry", language) for language in GREETING_ORDER],
+            )
+            return True
+
+        if result.action == "default":
+            session.language_attempts = result.attempts
+            await self._apply_language(
+                session,
+                connection_manager,
+                result.language or settings.VOICE_LANGUAGE_ON_FAILURE,
+                speak=False,
+            )
+            # The fallback line defaults the call to English and offers a
+            # human, which is exactly what the brief asks for.
+            self._schedule_phrases(
+                session,
+                connection_manager,
+                [("default_english", "en-IN")],
+            )
+            return True
+
+        if result.action in {"opt_out", "human_request"}:
+            await self._stop_active_speech(session, connection_manager)
+            language = session.effective_language or "en-IN"
+            self._schedule_phrases(
+                session,
+                connection_manager,
+                [(result.action, language)],
+            )
+            if result.action == "opt_out":
+                session.metadata["opted_out"] = True
+            return True
+
+        return False
+
     def _schedule_resume(
         self,
         session: VoiceSession,
@@ -1028,6 +1286,36 @@ class AudioHandler:
                 },
             )
 
+            # Phase 3: until a language is chosen, the turn is an answer to
+            # "which language?" and never reaches the reply model.
+            if settings.VOICE_ASK_LANGUAGE and not session.language_locked:
+                await self._stop_active_speech(
+                    session,
+                    connection_manager,
+                )
+                await self._handle_language_gate(
+                    session,
+                    connection_manager,
+                    transcript,
+                )
+                return
+
+            # After the lock, an explicit request for another language changes
+            # it. Nothing else may move the call off the chosen language.
+            if settings.VOICE_ASK_LANGUAGE and session.language_locked:
+                changed_to = detect_language_change(
+                    transcript,
+                    session.language,
+                )
+                if changed_to is not None:
+                    await self._apply_language(
+                        session,
+                        connection_manager,
+                        changed_to,
+                        changed=True,
+                    )
+                    return
+
             if session.metadata.get("awaiting_fallback_consent"):
                 intent = classify_resume_intent(transcript)
                 if intent == "yes":
@@ -1104,8 +1392,8 @@ class AudioHandler:
                 )
                 return
 
-            # A stop utterance while Via is otherwise idle is still a control
-            # command, not a new question for the LLM.
+            # A stop utterance while the assistant is otherwise idle is still a
+            # control command, not a new question for the LLM.
             idle_decision = classify_interruption(transcript)
             if idle_decision.intent == "stop":
                 self._schedule_system_message(
@@ -1115,16 +1403,7 @@ class AudioHandler:
                 )
                 return
 
-            if session.has_active_response():
-                response_id = session.interrupt_active_response()
-                if response_id is not None:
-                    await connection_manager.send_json(
-                        session.session_id,
-                        {
-                            "type": "interrupted",
-                            "response_id": response_id,
-                        },
-                    )
+            await self._stop_active_speech(session, connection_manager)
 
             self._schedule_response(
                 session,
@@ -1441,7 +1720,9 @@ class AudioHandler:
                     session,
                     connection_manager,
                     str(requested_language),
+                    lock=True,
                 )
+                session.metadata["greeted"] = True
 
             state = await asyncio.to_thread(
                 ConversationService.bind,
@@ -1481,6 +1762,21 @@ class AudioHandler:
                     "persistence": session_repository.status,
                 },
             )
+
+            # Phase 3: every call starts by asking for a language. The
+            # trilingual greeting plays from the pre-rendered cache, with no
+            # text-to-speech wait on the first turn.
+            if (
+                settings.VOICE_ASK_LANGUAGE
+                and not session.language_locked
+                and not session.metadata.get("greeted")
+            ):
+                session.metadata["greeted"] = True
+                self._schedule_phrases(
+                    session,
+                    connection_manager,
+                    [("greeting", language) for language in GREETING_ORDER],
+                )
             return
 
         if message_type == "set_document_context":

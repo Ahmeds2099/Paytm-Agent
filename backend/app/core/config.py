@@ -101,6 +101,26 @@ class Settings:
         "auto",
     ).strip()
 
+    # Phase 3: ask the merchant which language to use, then lock it. With this
+    # off, the call keeps the old detect-as-you-go behaviour.
+    VOICE_ASK_LANGUAGE: bool = os.getenv(
+        "VOICE_ASK_LANGUAGE",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    # Used when two answers do not resolve a language. The brief says English.
+    VOICE_LANGUAGE_ON_FAILURE: str = os.getenv(
+        "VOICE_LANGUAGE_ON_FAILURE",
+        "en-IN",
+    ).strip()
+
+    # Where pre-rendered fixed phrases are cached. Relative paths resolve
+    # against the backend directory.
+    VOICE_PHRASE_CACHE_DIR: str = os.getenv(
+        "VOICE_PHRASE_CACHE_DIR",
+        "",
+    ).strip()
+
     VOICE_ALLOW_WHISPER_FALLBACK: bool = os.getenv(
         "VOICE_ALLOW_WHISPER_FALLBACK",
         "true",
