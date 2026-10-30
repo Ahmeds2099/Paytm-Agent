@@ -195,17 +195,58 @@ class Settings:
 
     VOICE_MAX_TOKENS: int = int(os.getenv(
         "VOICE_MAX_TOKENS",
-        "220",
+        "320",
     ))
+
+    # Spoken replies: aim for the soft limit, allow one more sentence when it
+    # carries a question, and never exceed the hard limit.
+    VOICE_REPLY_SOFT_SENTENCES: int = int(os.getenv(
+        "VOICE_REPLY_SOFT_SENTENCES",
+        "3",
+    ))
+
+    VOICE_REPLY_MAX_SENTENCES: int = int(os.getenv(
+        "VOICE_REPLY_MAX_SENTENCES",
+        "5",
+    ))
+
+    LLM_MODEL: str = os.getenv(
+        "LLM_MODEL",
+        "openai/gpt-oss-120b",
+    )
+
+    LLM_CLASSIFIER_MODEL: str = os.getenv(
+        "LLM_CLASSIFIER_MODEL",
+        "openai/gpt-oss-120b",
+    )
+
+    LLM_TIMEOUT_SECONDS: float = float(os.getenv(
+        "LLM_TIMEOUT_SECONDS",
+        "12",
+    ))
+
+    LLM_MAX_RETRIES: int = int(os.getenv(
+        "LLM_MAX_RETRIES",
+        "1",
+    ))
+
+    # gpt-oss is a reasoning model and hidden reasoning tokens count against
+    # max_tokens. Low effort keeps replies from being eaten by reasoning.
+    LLM_REASONING_EFFORT: str = os.getenv(
+        "LLM_REASONING_EFFORT",
+        "low",
+    )
 
     VOICE_INTERRUPTION_CONFIRM_TIMEOUT_SECONDS: float = float(os.getenv(
         "VOICE_INTERRUPTION_CONFIRM_TIMEOUT_SECONDS",
         "2.5",
     ))
 
+    # Emotion analysis is parked. The module stays in place so it can be
+    # switched back on, but nothing loads or waits while this is false.
     VOICE_ENABLE_EMOTION: bool = os.getenv(
         "VOICE_ENABLE_EMOTION",
-        "true",
+        "false",
     ).strip().lower() in {"1", "true", "yes", "on"}
 
     EMOTION_DOUBT_THRESHOLD: float = float(os.getenv(

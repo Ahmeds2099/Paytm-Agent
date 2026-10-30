@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.prompts import (
     CLARIFICATION_MODE_PROMPT,
     SYSTEM_PROMPT,
-    VOICE_RESPONSE_PROMPT,
+    build_voice_prompt,
 )
 from app.services.companion_client import ask_companion
 from app.services.conversation.paused_response import PausedResponse
@@ -21,6 +21,10 @@ from app.services.prompt_builder import PromptBuilder
 from app.services.qdrant_service import QdrantService
 from app.services.tool_intent import is_code_request, looks_like_a_task
 from app.services.tts.stream import StreamingTTS
+from app.services.voice.response_guard import (
+    VoiceReplyGuard,
+    apology_line,
+)
 
 
 
@@ -39,6 +43,7 @@ class ConversationManager:
         document_ids: list[str] | None = None,
         client_id: str | None = None,
         interruption_context: dict | None = None,
+        language: str | None = None,
     ) -> tuple[list[dict], list[dict], dict]:
         query_vector = self.embedder.embed_query(query)
         chunks = QdrantService.search(
@@ -63,24 +68,13 @@ class ConversationManager:
             messages.append(
                 {
                     "role": "system",
-                    "content": VOICE_RESPONSE_PROMPT,
+                    "content": build_voice_prompt(language),
                 }
             )
 
-            if not settings.VOICE_ENABLE_EMOTION and not settings.VOICE_ALLOW_WHISPER_FALLBACK:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "IMPORTANT: You are running in a constrained demo environment. "
-                            "Keep your responses extremely short. Limit all answers to 1 or 2 brief sentences maximum. "
-                            "This ensures quick processing and allows the user to test barge-in functionality."
-                        )
-                    }
-                )
-
         if (
-            emotional_context
+            settings.VOICE_ENABLE_EMOTION
+            and emotional_context
             and emotional_context.get("doubt_score", 0)
             >= settings.EMOTION_DOUBT_THRESHOLD
         ):
@@ -330,6 +324,7 @@ class ConversationManager:
             document_ids=document_ids,
             client_id=client_id,
             interruption_context=interruption_context,
+            language=language,
         )
 
         if settings.VIA_ENABLE_TOOLS and looks_like_a_task(query) and not controller.cancelled:
@@ -461,59 +456,87 @@ class ConversationManager:
             llm_started = perf_counter()
             first_token = True
             token_limit = 4860 if is_code_request(query) else settings.VOICE_MAX_TOKENS
-            for token in self.llm.stream(
-                messages,
-                max_tokens=token_limit,
-            ):
-                if not token:
-                    continue
+            guard = VoiceReplyGuard(language=language)
+            try:
+                for token in self.llm.stream(
+                    messages,
+                    max_tokens=token_limit,
+                ):
+                    if not token:
+                        continue
 
-                if first_token:
-                    first_token = False
-                    now = perf_counter()
+                    if first_token:
+                        first_token = False
+                        now = perf_counter()
+                        yield {
+                            "type": "pipeline_stage",
+                            "response_id": response_id,
+                            "data": {
+                                "stage": "llm",
+                                "status": "first_token",
+                                "duration_ms": round(
+                                    (now - llm_started) * 1000,
+                                ),
+                                "elapsed_ms": round(
+                                    (now - turn_started) * 1000,
+                                ),
+                            },
+                        }
+
+                    response.append_generated(token)
+
+                    # Barge-in cancels presentation, not generation. Draining
+                    # the Groq stream retains the complete answer for resume.
+                    if controller.cancelled:
+                        tts.reset()
+                        continue
+
                     yield {
-                        "type": "pipeline_stage",
+                        "type": "token",
                         "response_id": response_id,
-                        "data": {
-                            "stage": "llm",
-                            "status": "first_token",
-                            "duration_ms": round(
-                                (now - llm_started) * 1000,
-                            ),
-                            "elapsed_ms": round(
-                                (now - turn_started) * 1000,
-                            ),
-                        },
+                        "data": token,
                     }
 
-                response.append_generated(token)
+                    for sentence in guard.feed(token):
+                        yield from self._sentence_items(
+                            tts=tts,
+                            response_id=response_id,
+                            sentence=sentence,
+                            end_offset=len(response.generated_text),
+                            response=response,
+                            turn_started=turn_started,
+                        )
 
-                # Barge-in cancels presentation, not generation. Draining
-                # the Groq stream retains the complete answer for resume.
-                if controller.cancelled:
-                    tts.reset()
-                    continue
-
-                yield {
-                    "type": "token",
-                    "response_id": response_id,
-                    "data": token,
-                }
-
-                sentence = tts.append(token)
-                if sentence is not None:
-                    yield from self._sentence_items(
-                        tts=tts,
-                        response_id=response_id,
-                        sentence=sentence,
-                        end_offset=len(response.generated_text),
-                        response=response,
-                        turn_started=turn_started,
-                    )
+                    # The spoken budget is spent. Stop draining the model so
+                    # the turn ends as soon as the last sentence is spoken.
+                    if guard.finished and not controller.cancelled:
+                        break
+            except Exception:
+                # The model call is retried once inside LLMService. If it still
+                # fails, speak a short apology instead of going silent.
+                if (
+                    not controller.cancelled
+                    and not response.generated_text.strip()
+                ):
+                    apology = apology_line(language)
+                    response.append_generated(apology)
+                    yield {
+                        "type": "token",
+                        "response_id": response_id,
+                        "data": apology,
+                    }
+                    for sentence in guard.feed(apology):
+                        yield from self._sentence_items(
+                            tts=tts,
+                            response_id=response_id,
+                            sentence=sentence,
+                            end_offset=len(response.generated_text),
+                            response=response,
+                            turn_started=turn_started,
+                        )
 
             if not controller.cancelled:
-                sentence = tts.flush_text()
-                if sentence is not None:
+                for sentence in guard.flush():
                     yield from self._sentence_items(
                         tts=tts,
                         response_id=response_id,

@@ -419,3 +419,155 @@ only; two tests cover it. After the fix the observed partials started at
 | TTS behind an interface, per-request language | Pass |
 | No secrets printed or committed | Pass |
 | Owner browser verification | Pending |
+
+---
+
+---
+
+## 2026-10-29 - Phase 2: Retune the models and intents for telecalling
+
+Goal: stop the assistant sounding like an IVR, keep replies short enough to
+listen to, answer in the language of the call, and make a turn feel fast.
+
+### Owner decisions that override the brief
+
+| Topic | Brief | Built |
+| --- | --- | --- |
+| Emotion analysis | delete it outright | module kept, disabled by default (`VOICE_ENABLE_EMOTION=false`); nothing loads, waits or changes the prompt while false. One flag turns it back on. |
+| Reply length | one or two sentences | aim for three, allow a fourth when it is a question, absolute cap of five. Over budget, close with a short "would you like to know more?" offer. |
+| Language lock | Phase 3 asks and locks | left in Phase 3 as briefed. Phase 2 adds a strict "reply only in the call language" prompt rule; the automatic switch itself is fixed by the Phase 3 lock. |
+
+### What changed
+
+- `backend/app/core/prompts.py`
+  - replaced the general system prompt with a merchant telecalling persona:
+    truth rules, confirm before money commitments, one question at a time,
+    hand over to a human when that is the honest answer.
+  - new `build_voice_prompt(language)` with a hard language rule for
+    `hi-IN`, `kn-IN`, `en-IN` and an `auto` rule: reply in the language the
+    merchant used, never transliterate an Indian language into Latin letters.
+  - voice rules: one to three sentences, fourth only if a question, never
+    more than five, no lists or Markdown, amounts in words, one question.
+  - `CLARIFICATION_MODE_PROMPT` kept for the parked emotion path.
+- `backend/app/services/voice/response_guard.py` (new)
+  - `strip_voice_markup`: removes code fences, headers, bullets, numbered
+    markers, bold/italic, links and table pipes.
+  - sentence splitting for `.`, `!`, `?`, Devanagari `।` and `॥`, with guards
+    for numbered markers and abbreviations such as `Rs.`
+  - `VoiceReplyGuard`: streaming budget (soft 3, max 5, fourth allowed only
+    when it ends in a question), localized closing question, long-sentence
+    chunks cut at a word boundary without spending a sentence.
+  - `apology_line(language)` for a failed model call.
+- `backend/app/services/llm.py`
+  - one model for replies and classification (`LLM_MODEL` and
+    `LLM_CLASSIFIER_MODEL`, both `openai/gpt-oss-120b`).
+  - 12 s timeout, one retry, `complete_json` helper, no silent failure.
+  - `reasoning_effort=low`. This mattered: gpt-oss hidden reasoning tokens
+    count against `max_tokens`, and with the larger telecalling prompt a
+    220-token ceiling sometimes produced an empty or half-finished reply.
+- `backend/app/services/intent.py` (new)
+  - 17 labels: settlement_query, transaction_issue, qr_code_issue,
+    device_issue, refund_query, loan_interest, soundbox_issue, charges_query,
+    onboarding_kyc, language_choice, confirmation_yes, confirmation_no,
+    human_request, callback_request, opt_out, objection, other.
+  - slot extraction: amount, transaction id, date, phone, time, product,
+    language.
+  - deterministic fast path for the six safety labels (opt-out, human,
+    callback, language, yes, no) in English, Hindi and Kannada; everything
+    else goes to the JSON classifier, with a safe fallback to `other`.
+- `backend/app/services/conversation_manager.py`
+  - language-aware system prompt, no more duplicated demo prompt.
+  - emotion clarification gate only runs when the feature is enabled.
+  - streaming replies pass through `VoiceReplyGuard`; the model stream stops
+    as soon as the spoken budget is spent.
+  - failed model call speaks a localized apology instead of silence.
+- `backend/app/core/config.py`
+  - `LLM_MODEL`, `LLM_CLASSIFIER_MODEL`, `LLM_TIMEOUT_SECONDS`,
+    `LLM_MAX_RETRIES`, `LLM_REASONING_EFFORT`, `VOICE_REPLY_SOFT_SENTENCES`,
+    `VOICE_REPLY_MAX_SENTENCES`, `VOICE_MAX_TOKENS` 320, emotion default false.
+- `.env.example` and `backend/.env`
+  - emotion off, new LLM and reply-budget settings, reasoning effort low.
+  - only key names were edited; no secret value was printed.
+- Tests and tooling
+  - `backend/tests/data/intent_examples.py`: 5 examples per intent per
+    language, 255 turns in total.
+  - `backend/tests/test_intent.py`, `backend/tests/test_response_guard.py`.
+  - `backend/scripts/intent_eval.py`: owner-run live accuracy run, one model
+    call per example the rules do not catch.
+
+### Tests
+
+`python -m unittest discover -s tests` -> **97 tests, OK**. `compileall` is
+clean and `app.main` imports.
+
+Coverage added:
+
+- 17 unique intent labels, dataset completeness, every safety example caught
+  by a rule without calling the model, non-safety turns not misread as safety,
+  language names in three scripts, slot extraction, JSON classifier path,
+  unknown label and model failure fallback.
+- markup stripping, Devanagari sentence stops, numbered markers and
+  abbreviations, budget at 3/4/5, localized offer, auto language adding no
+  offer, streaming guard matching the batch result, long-sentence handling,
+  apology text.
+
+### Latency
+
+Warm English turn, same probe as Phase 1:
+
+| Measurement | Phase 1 | Phase 2 |
+| --- | --- | --- |
+| Final transcript | +1.31 s | +1.28 to +2.34 s |
+| First token | +2.02 s | +1.55 to +6.27 s |
+| First audio | +2.32 s | +1.86 to +6.86 s |
+| Turn complete | 10.89 s | 2.95 to 7.98 s |
+
+The turn is much shorter because the reply is short and the model stream stops
+at the budget. The remaining spread is Groq queue time, not the pipeline: the
+same probe measured 1.55 s and 6.27 s for first token on consecutive warm
+turns. The first turn after a backend restart is consistently slower
+(7.0-7.5 s first token) because the model connection is cold; subsequent turns
+are warm.
+
+Emotion no longer appears in the backend log at all: no model download, no
+`emotion2vec`, no `funasr` lines after the restart, and `/system/status`
+reports `emotion_enabled: false`.
+
+### Live replies
+
+Full socket turns, Cartesia audio in, Sarvam transcript, Groq reply, Cartesia
+audio out:
+
+| Language | Transcript | Reply | Sentences |
+| --- | --- | --- | --- |
+| `hi-IN` | मेरा पेटीएम क्यूआर कोड काम नहीं कर रहा है, कृपया मदद करें। | कृपया बताइए, QR कोड स्कैन करने पर क्या कोई त्रुटि संदेश दिख रहा है या स्क्रीन पर कुछ नहीं आता? | 1 |
+| `kn-IN` | ನನ್ನ ಪೇಟಿಎಂ ಕ್ಯೂಆರ್ ಕೋಡ್ ಕೆಲಸ ಮಾಡುತ್ತಿಲ್ಲ, ದಯವಿಟ್ಟು ಸಹಾಯ ಮಾಡಿ. | ನಿಮ್ಮ ಕ್ಯೂಆರ್ ಕೋಡ್ ಕೆಲಸ ಮಾಡದಿರುವುದನ್ನು ಅರ್ಥಮಾಡಿಕೊಂಡೆ. ದಯವಿಟ್ಟು, ಇತ್ತೀಚೆಗೆ ಕೋಡ್ ಬದಲಾಯಿಸಿದ್ದೀರಾ ಅಥವಾ ಯಾವುದೇ ದೋಷ ಸಂದೇಶ ಕಾಣಿಸುತ್ತಿದೆಯಾ? | 2 |
+| `en-IN` | My Paytm QR code is not working. Can you help me? | I'm sorry the QR isn't working. Could you tell me if it's showing an error message or just not scanning at all? | 2 |
+
+All three stayed in the call language and script, asked one clarifying
+question, and contained no lists or formatting. The previous Kannada turn that
+opened with a numbered troubleshooting list is gone.
+
+### Phase 2 acceptance
+
+| Acceptance item | Status |
+| --- | --- |
+| Intent classifier tests pass | Pass (97 tests, safety rules covered in three languages) |
+| No emotion code loads | Pass (disabled by default, no model lines in the log) |
+| Replies are short and spoken-style | Pass (live, 1-2 sentences, no Markdown or numbered steps) |
+| Sample transcript per language | Pass (Hindi, Kannada, English) |
+| One model for replies and classification | Pass |
+| Timeout, one retry, spoken apology | Pass |
+| No secrets printed or committed | Pass |
+| Owner browser verification | Pending |
+| Live intent accuracy run | Pending, owner-run: `scripts/intent_eval.py` |
+
+### Notes for the next phase
+
+- Kannada-to-English switching in `auto` mode is still possible until the
+  Phase 3 ask-and-lock lands. The Phase 2 prompt forbids switching, but the
+  session language itself is not locked yet.
+- The reply budget is enforced in code, so a prompt regression cannot bring
+  the numbered-list read-aloud back.
+- Groq latency varies by queue; if the first audio of a call needs to be more
+  predictable, pre-warming the model at startup is the next lever.
