@@ -660,8 +660,10 @@ Phase 2 detail that matters later:
   code, so a prompt regression cannot make the agent read a list aloud. Budget:
   aim for three sentences, a fourth only if it is a question, hard cap five,
   otherwise close with a localized "would you like to know more?".
-- `backend/app/services/intent.py` classifies a turn. Rules run first for
-  `opt_out`, `human_request`, `callback_request`, `language_choice`,
+- `backend/app/services/intent.py` classifies a turn against the brief's 16
+  labels, with the concrete merchant issue in a separate `topic` field. Rules
+  run first for `opt_out`, `human_request`, `ticket_request`,
+  `repeat_complaint`, `callback_request`, `language_choice`,
   `confirmation_yes` and `confirmation_no` in all three languages. Everything
   else asks the model for JSON.
 - `backend/app/services/llm.py` uses one model, `openai/gpt-oss-120b`, for
@@ -702,34 +704,10 @@ so nobody silently reverts them, and so Phase 4 knows where it stands.
 2. **Reply length is three, four if a question, five max.** The brief says one
    or two. The owner asked for a little more room. Enforced in
    `VoiceReplyGuard`.
-3. **The intent taxonomy does not match brief section 5.3.** This is the
-   biggest thing to reconcile before Phase 4. Built labels:
-
-   | Brief label | Built? | Built equivalent |
-   | --- | --- | --- |
-   | language_choice | yes | same |
-   | settlement_query | yes | same |
-   | device_issue | yes | same |
-   | ticket_request | **no** | not modelled |
-   | loan_interest | yes | same |
-   | device_offer_interest | **no** | not modelled |
-   | policy_question | **no** | not modelled |
-   | callback_request | yes | same |
-   | human_request | yes | same |
-   | repeat_complaint | **no** | not modelled |
-   | objection | yes | same |
-   | opt_out | yes | same |
-   | confirmation_yes / confirmation_no | yes | same |
-   | smalltalk | **no** | folded into `other` |
-   | out_of_scope | **no** | folded into `other` |
-
-   Built labels with no brief counterpart: `transaction_issue`,
-   `qr_code_issue`, `refund_query`, `soundbox_issue`, `charges_query`,
-   `onboarding_kyc`. They were added because they are the questions merchants
-   actually ask on a Paytm call, but Phase 4 escalation rules in the brief key
-   off the brief's labels. Recommendation: extend the taxonomy at the start of
-   Phase 4, keep the existing labels as sub-labels or aliases, and update
-   `backend/tests/data/intent_examples.py` plus `INTENTS` together.
+3. **The intent taxonomy was reconciled on 2026-10-30.** Phase 2 shipped 17
+   labels that did not match the brief; see the reconciliation section below.
+   `intent` is now exactly the brief's 16 labels and the extra merchant-issue
+   detail lives in `topic`. Nothing to decide here any more.
 4. **Language is still `auto`.** Phase 3 owns ask-and-lock. Until then, `auto`
    can still follow the merchant from Kannada into English. The Phase 2 prompt
    forbids switching in words, but the session language is not locked.
@@ -790,9 +768,9 @@ section 9 on credit protection and demo reliability.
 - [ ] Browser check on `http://localhost:3100`: microphone in Hindi, Kannada
       and English, plus barge-in.
 - [ ] Run `scripts/intent_eval.py` for live intent accuracy. It spends Groq
-      credits, which is why it was left to the owner.
-- [ ] Confirm whether the Phase 4 taxonomy should be reconciled to the brief's
-      label list, or whether the built list stays.
+      credits, which is why it was left to the owner. The taxonomy is now the
+      brief's 16 labels, so the run also reports how often `topic` agrees with
+      the label it implies.
 
 ### Gotchas for the next agent
 
@@ -813,3 +791,102 @@ section 9 on credit protection and demo reliability.
   `core.autocrlf`, not a problem with the files.
 - Voice sessions are keyed by `client_id`; the probes use their own ids so they
   do not disturb a browser session.
+
+---
+
+## 2026-10-30 - Intent taxonomy reconciled to the brief
+
+### Why
+
+Phase 2 shipped 17 labels built from the merchant-issue angle rather than from
+brief section 5.3. Ten matched the brief, six brief labels were missing
+(`ticket_request`, `device_offer_interest`, `policy_question`,
+`repeat_complaint`, `smalltalk`, `out_of_scope`), and seven labels existed that
+the brief does not name. That was a spec deviation with real consequences:
+Phase 4 escalation in section 7.5 keys on `repeat_complaint` and
+`out_of_scope`, retrieval in section 7.7 keys on `policy_question`, and the
+tool layer in section 7.4 maps `ticket_request` to `create_support_ticket` and
+`device_offer_interest` to `send_offer_link`. None of those could ever fire.
+
+The Phase 2 tests did not catch it because the 255-example dataset was written
+from the same label list the code used, so the tests validated the label list
+against itself.
+
+### Owner decision
+
+Keep the brief's 16 labels as `intent`, because that is what Phase 4 routes and
+escalates on, and carry the extra merchant-issue detail in a separate `topic`
+field so answers keep the precision the Phase 2 labels had. One label per turn,
+exactly as the brief requires.
+
+### What changed
+
+- `backend/app/services/intent.py`
+  - `INTENTS` is now the brief's 16 labels. `other` is gone.
+  - new `TOPICS` and `extract_topic()`: `transaction_issue`, `qr_code_issue`,
+    `refund_query`, `soundbox_issue`, `charges_query`, `onboarding_kyc`.
+  - `IntentResult` gained a `topic` field; `as_dict()` returns it next to
+    `intent`, `confidence`, `slots` and `source`.
+  - the classifier prompt now asks for
+    `{"intent": ..., "confidence": ..., "topic": ...}` and states that
+    money-related asks are `out_of_scope`.
+  - new rule-backed labels: `ticket_request`, `repeat_complaint`, `smalltalk`,
+    and a narrow `device_offer_interest` phrase list. `CRITICAL_INTENTS` is the
+    old `SAFETY_INTENTS` under a clearer name, now including ticket and repeat
+    complaint because both promise or escalate something.
+  - rule order is now opt-out, human, ticket, repeat complaint, callback,
+    confirmation no, confirmation yes, device offer, smalltalk. `repeat_complaint`
+    moved above `callback_request` because "I called before and nothing
+    happened" is a repeat complaint, not a request to be called back.
+  - the model-failure and unknown-label fallback is `out_of_scope`, which is
+    safer than the old `other`: Phase 4 escalates on it instead of answering.
+  - an empty transcript classifies as `smalltalk`.
+- `backend/tests/data/intent_examples.py`: rewritten to 16 labels x 5 examples
+  x 3 languages, 240 turns. Examples for `ticket_request`, `repeat_complaint`,
+  `smalltalk`, `out_of_scope`, `policy_question` and `device_offer_interest`
+  were added in Devanagari, Kannada and English. Soundbox and card-machine
+  faults now both sit under `device_issue`.
+- `backend/tests/test_intent.py`: asserts the exact 16-label set, that no
+  issue label leaked into `INTENTS`, that the topic map only names valid
+  labels, that all eight critical labels are caught by rules without a model,
+  topic extraction in three scripts, rule topic beating the model topic,
+  unknown topic being dropped, and the `out_of_scope` fallback.
+- `backend/scripts/intent_eval.py`: reports intent accuracy per language,
+  how many turns each path resolved, the critical-rule rate, and how often
+  `topic` agrees with the label it implies.
+
+### Topic to label map
+
+Used by the eval script and worth remembering in Phase 4:
+
+| topic | usual label | why |
+| --- | --- | --- |
+| `soundbox_issue` | `device_issue` | the brief's device fault |
+| `qr_code_issue` | `policy_question` | answered from troubleshooting policy |
+| `charges_query` | `policy_question` | answered from the fee policy |
+| `onboarding_kyc` | `policy_question` | answered from the KYC policy |
+| `refund_query` | `out_of_scope` | money-related, escalate to a human |
+| `transaction_issue` | `out_of_scope` | money-related, escalate to a human |
+
+The map is a guide, not a hard rewrite: the model picks the label, the regex
+picks the topic, and the eval script reports disagreement. Money-related turns
+landing in `out_of_scope` is deliberate, because section 7.4 has no refund or
+limit-change function and section 7.5 says to hand those to a human.
+
+### Tests
+
+`python -m unittest discover -s tests` -> **106 tests, OK** (was 97).
+`compileall` is clean and `app.main` imports.
+
+### What this means for Phase 4
+
+- Route and escalate on `intent` only. Every label the brief's sections 7.4,
+  7.5 and 7.7 refer to now exists.
+- Use `topic` for the answer detail and for choosing a policy passage, never
+  for routing.
+- `out_of_scope` now covers three cases: genuinely out-of-function asks,
+  money-related asks, and any turn where classification failed. Treat all three
+  as escalation or "a human will help", not as a chance to improvise.
+- `ticket_request` and `device_offer_interest` are commitments. The brief
+  requires verbal confirmation before `create_support_ticket` or
+  `send_offer_link`, so Phase 4 must gate them on `confirmation_yes`.
