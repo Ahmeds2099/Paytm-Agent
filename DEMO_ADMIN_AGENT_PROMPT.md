@@ -25,7 +25,7 @@ Latest commit: `94cd620`. Tests: 157/157. tsc clean. Three servers must be runni
 Three interconnected features that together make this a complete, demo-ready product:
 
 1. **Demo Scenarios** — Six fully-scripted merchant personas, each with a predefined issue, complete conversation flow, and outcome (ticket, resolution, escalation, or closure).
-2. **Paytm-branded Landing + Merchant Login** — Replace the current generic landing page with a Paytm-coloured page where a user "logs in" by selecting a merchant persona, simulating an inbound call.
+2. **Paytm-branded Landing + Merchant Login** — Replace the current generic landing page with a Paytm-coloured page where a user selects a merchant persona to simulate a Paytm-initiated outbound call.
 3. **Admin Dashboard** — Replace the Architecture tab with a live call-log panel for the sales team, showing every call's outcome, escalation status, and attention flags in real time.
 
 Do all three in order. Run tests and TypeScript check after each. Never break the 157-test baseline.
@@ -160,7 +160,7 @@ scenario: repeated_escalation
 
 ---
 
-#### Persona 6 — Priya Nair (Opt Out — Do Not Call)
+#### Persona 6 — Priya Nair (Promotional Loan Offer — Opt Out)
 ```
 merchant_id: MID006
 name: Priya Nair
@@ -170,11 +170,12 @@ avatar: 💄
 scenario: opt_out
 ```
 **Full conversation flow:**
-1. Agent greets.
-2. Priya: "Please remove my number. I don't want these calls."
-3. Agent classifies `opt_out` immediately.
-4. Agent: "Absolutely. I've noted your request and will ensure you receive no further calls from us. Thank you, Priya. Goodbye."
-5. Call ends immediately. Logs as `closed:opt_out`. Admin sees `OPT-OUT` badge on this record.
+1. Paytm initiates the outbound call. The agent runs the normal language gate, then introduces the promotional loan offer; it does not imply Priya called Paytm.
+2. Agent: "We're calling from Paytm with a promotional loan offer for your business. Would you be interested in hearing more?"
+3. Priya: "No, I want to opt out of this loan offer. Please remove my number."
+4. Agent classifies `opt_out` immediately (before treating "No" as a generic refusal), records the opt-out against this merchant, and stops all promotional discussion.
+5. Agent acknowledges in Priya's chosen language that her number has been marked not to receive further promotional calls, then ends the call.
+6. Logs as `closed:opt_out`. Admin shows an `OPT-OUT` badge and the recorded request on this call.
 
 ---
 
@@ -292,12 +293,12 @@ All gradients use blue tones. No purple, no generic grey. Remove all existing co
    - New behaviour: clicking Connect (or clicking a persona card) first opens a **persona picker modal** (a small overlay/sheet) that lists the 6 merchant cards.
    - The user selects one persona → modal closes → **then** the agent connects as normal.
    - The selected persona's `merchant_id` and `name` are stored in React state and shown in the session-signals panel ("Simulating: Lakshmi Venkat").
-   - After connecting, `session_init` is sent with only `client_id: merchant_id` — **do NOT pass `language`** (see Section 3.4).
+   - After connecting, `session_init` is sent with `client_id: merchant_id` and `merchant_profile` metadata — **do NOT pass `language`, `language_code`, or document IDs** (see Section 3.4).
 
 ```
 Persona picker modal layout:
 ┌──────────────────────────────────────────────┐
-│  Choose who is calling                    ✕  │
+│  Choose a merchant to call                 ✕  │
 │  The agent will load this merchant's data     │
 ├──────────────────────────────────────────────┤
 │  ┌────────┐ ┌────────┐ ┌────────┐           │
@@ -326,7 +327,7 @@ After clicking a merchant card, the page transitions to a full-page call simulat
 **Left panel (40%) — Merchant profile:**
 ```
 ┌──────────────────────────┐
-│  📞 Call in progress...  │
+│  📞 Outbound call in progress... │
 │                          │
 │     [Avatar Emoji]       │
 │    Ravi Kumar            │
@@ -577,11 +578,11 @@ frontend/lib/voice/websocket.ts  — no changes needed (tool_call, escalation al
 - [ ] All 6 persona cards appear in the persona picker modal with avatars, names, and issue labels.
 - [ ] Lakshmi Venkat (Persona 4) is visually highlighted as the recommended (⭐) starting persona.
 - [ ] Pressing Connect opens the persona picker modal — selecting a persona closes it and starts the call.
-- [ ] `session_init` sent with `client_id` only — NO `language` field — for every persona.
+- [ ] `session_init` sent with `client_id` and `merchant_profile` only — NO `language`, `language_code`, or document IDs — for every persona.
 - [ ] Agent always runs the language gate greeting first ("Hello and welcome to Paytm...") regardless of which persona is selected.
 - [ ] Lakshmi hero demo: choose English → mention refund → agent calls trigger_refund → speaks confirmation → Admin shows `resolved:refund_initiated`.
 - [ ] Amit escalation demo: choose Hindi → complain twice → escalation banner fires → Admin shows ⚠️ ATTENTION.
-- [ ] Priya opt-out demo: say “remove my number” → call ends < 30s → Admin shows OPT-OUT badge.
+- [ ] Priya opt-out demo: after the language gate, the Paytm agent offers a promotional loan; Priya says “No, I want to opt out of this loan offer. Please remove my number.” The request is recorded, promotional discussion stops, the call closes promptly, and Admin shows the OPT-OUT badge.
 - [ ] Admin tab shows all calls with correct status dot colours and outcome labels.
 - [ ] Session signals panel shows “Simulating: [Name] · [MID]” after persona is selected.
 - [ ] `tsc --noEmit` is clean.
@@ -607,5 +608,5 @@ frontend/lib/voice/websocket.ts  — no changes needed (tool_call, escalation al
 - System prompt injection after language lock: `"You are calling {merchant_name} from {business_name}. Their registered concern is: {scenario_label}. Use available tools to look up their account and resolve their issue. After resolving, confirm the resolution warmly and close the call."`
 - **Language is NEVER pre-loaded from the persona** — the greeting runs first, the merchant picks their language, then the scenario context is used to guide the conversation in that language.
 - For Persona 5 (Amit — escalation): seed data includes `prior_complaint_count: 2` so the intent classifier immediately treats the first complaint as `repeat_complaint` and auto-escalates on the second message.
-- For Persona 6 (Priya — opt-out): system prompt should NOT mention her issue — just a neutral greeting. Her first utterance triggers opt_out classification immediately.
+- For Persona 6 (Priya — opt-out): after the language gate locks, the agent must introduce the Paytm-initiated promotional loan offer. Priya's opt-out utterance must trigger the existing high-priority `opt_out` classifier, record the request, stop the offer flow immediately, and close the call. Do not frame this as an inbound support call or merely as a generic "not interested" objection.
 - **Hero demo (Persona 4, Lakshmi)**: make this the default pre-selected persona in the picker modal. The ⭐ star badge draws attention to it. During any demo presentation, lead with this scenario first — it shows the complete happy path: greeting → language choice → problem stated → tool called → refund initiated → confirmation → warm close.

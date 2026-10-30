@@ -7,16 +7,17 @@ keyed by txn_id so repeat POST /refund calls are idempotent.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from threading import Lock
 
 TODAY = date.today()
 
 QR_STORE: dict[str, dict] = {
     "MID001": {
         "merchant_id": "MID001",
-        "qr_status": "active",
-        "last_scan_amount": 500.0,
-        "last_scan_ts": "2026-10-29T14:32:00Z",
-        "issue": None,
+        "qr_status": "inactive",
+        "last_scan_amount": None,
+        "last_scan_ts": None,
+        "issue": "QR code not rendering — contact support",
     },
     "MID002": {
         "merchant_id": "MID002",
@@ -52,6 +53,14 @@ SETTLEMENT_STORE: dict[str, dict] = {
         "expected_date": None,
         "utr": None,
     },
+    "TXN004": {
+        "txn_id": "TXN004",
+        "status": "settled",
+        "amount": 2400.0,
+        "settled_date": str(TODAY),
+        "expected_date": str(TODAY),
+        "utr": "UTR0042400",
+    },
 }
 
 # Refund store: txn_id -> result (idempotency: same txn_id always returns same result)
@@ -83,6 +92,62 @@ SOUNDBOX_STORE: dict[str, dict] = {
         "issue": "Device offline — check power and WiFi",
     },
 }
+
+# Ticket records are deterministic demo data and kept in memory like the other
+# mock API fixtures.
+TICKET_STORE: dict[str, dict] = {
+    "TICKET-PRIOR-001": {
+        "ticket_id": "TICKET-PRIOR-001",
+        "merchant_id": "MID005",
+        "issue_type": "settlement_delayed",
+        "description": "Prior settlement follow-up",
+        "priority": "normal",
+        "status": "open",
+        "eta_hours": 24,
+    },
+    "TICKET-PRIOR-002": {
+        "ticket_id": "TICKET-PRIOR-002",
+        "merchant_id": "MID005",
+        "issue_type": "settlement_delayed",
+        "description": "Repeated settlement follow-up",
+        "priority": "normal",
+        "status": "open",
+        "eta_hours": 24,
+    },
+}
+_ticket_lock = Lock()
+_ticket_seq = 0
+TICKET_ETA_HOURS = {
+    "qr_inactive": 4,
+    "settlement_delayed": 24,
+    "soundbox_offline": 8,
+    "refund_failed": 48,
+    "escalation": 1,
+}
+
+
+def create_ticket(
+    merchant_id: str,
+    issue_type: str,
+    description: str = "",
+    priority: str = "normal",
+) -> dict:
+    global _ticket_seq
+    with _ticket_lock:
+        _ticket_seq += 1
+        ticket_id = f"TICKET-{_ticket_seq:03d}"
+        record = {
+            "ticket_id": ticket_id,
+            "merchant_id": merchant_id,
+            "issue_type": issue_type,
+            "description": description,
+            "priority": priority,
+            "status": "open",
+            "eta_hours": TICKET_ETA_HOURS[issue_type],
+        }
+        TICKET_STORE[ticket_id] = record
+        return dict(record)
+
 
 # Refund counter used to generate new refund IDs
 _refund_seq: dict[str, int] = {}

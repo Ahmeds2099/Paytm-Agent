@@ -23,6 +23,8 @@ from app.api.ask import router as ask_router
 from app.api.stream import router as stream_router
 from app.api.tts import router as tts_router
 from app.api import voice
+from app.api.admin import router as admin_router
+from app.api.demo import router as demo_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -104,6 +106,8 @@ app.include_router(stream_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
 app.include_router(voice.router)
+app.include_router(admin_router)
+app.include_router(demo_router)
 
 @app.get("/")
 async def root():

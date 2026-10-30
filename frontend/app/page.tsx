@@ -1,10 +1,37 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
-import ArchitectureDashboard from "@/components/dashboard/architecturedashboard";
+import { useEffect, useMemo, useRef, useState } from "react";
+import AdminDashboard from "@/components/dashboard/admindashboard";
 import VoiceOrb from "@/components/voice/voiceorb";
+import CallView from "@/components/ui/CallView";
+import MerchantCard from "@/components/ui/MerchantCard";
+import PaytmLogo from "@/components/ui/PaytmLogo";
 import { useVoice } from "@/hooks/usevoice";
-import type { ConversationTurn, DemoDocument, Provenance, ToolCall } from "@/lib/voice/types";
+import { resolveApiUrl } from "@/lib/env";
+import type { ConversationTurn, DemoMerchant, Provenance } from "@/lib/voice/types";
+
+function isDemoMerchant(value: unknown): value is DemoMerchant {
+  if (!value || typeof value !== "object") return false;
+  const merchant = value as Record<string, unknown>;
+  return typeof merchant.merchant_id === "string"
+    && typeof merchant.name === "string"
+    && typeof merchant.business_name === "string"
+    && typeof merchant.city === "string"
+    && typeof merchant.phone === "string"
+    && typeof merchant.language === "string"
+    && typeof merchant.language_display === "string"
+    && typeof merchant.avatar === "string"
+    && typeof merchant.scenario_id === "string"
+    && typeof merchant.scenario_label === "string"
+    && typeof merchant.member_since === "string"
+    && typeof merchant.total_transactions === "number"
+    && typeof merchant.account_balance === "string"
+    && typeof merchant.open_tickets === "number"
+    && (merchant.recommended === undefined || typeof merchant.recommended === "boolean")
+    && (merchant.opted_out === undefined || typeof merchant.opted_out === "boolean")
+    && (merchant.transaction_id === undefined || typeof merchant.transaction_id === "string" || merchant.transaction_id === null)
+    && (merchant.device_id === undefined || typeof merchant.device_id === "string" || merchant.device_id === null);
+}
 
 const provenanceLabel = (value?: Provenance) => {
   if (value === "document") return "Domain knowledge";
@@ -12,36 +39,28 @@ const provenanceLabel = (value?: Provenance) => {
   return "General knowledge";
 };
 
-function SourceOptions({
-  demos,
-  uploading,
-  activeSlug,
-  onDemo,
+function MerchantChooser({
+  merchants,
+  selectedMerchantId,
+  onSelect,
 }: {
-  demos: DemoDocument[];
-  uploading: boolean;
-  activeSlug?: string;
-  onDemo(slug: string): void;
+  merchants: DemoMerchant[];
+  selectedMerchantId?: string;
+  onSelect(merchant: DemoMerchant): void;
 }) {
+  if (!merchants.length) {
+    return <div className="empty-state-box">Merchant scenarios are not available right now.</div>;
+  }
+
   return (
-    <div className="demo-source-list">
-      {demos.map((demo) => (
-        <button
-          type="button"
-          className="demo-source"
-          key={demo.slug}
-          onClick={() => onDemo(demo.slug)}
-          disabled={uploading || activeSlug === demo.slug}
-        >
-          <span className="file-format">{demo.format}</span>
-          <span>
-            <strong>{demo.title}</strong>
-            <small>{demo.description}</small>
-          </span>
-          <span className="source-action">
-            {activeSlug === demo.slug ? "Active" : uploading ? "Preparing..." : "Use demo"}
-          </span>
-        </button>
+    <div className="merchant-grid">
+      {merchants.map((merchant) => (
+        <MerchantCard
+          key={merchant.merchant_id}
+          merchant={merchant}
+          selected={selectedMerchantId === merchant.merchant_id}
+          onSelect={onSelect}
+        />
       ))}
     </div>
   );
@@ -50,53 +69,43 @@ function SourceOptions({
 function ConversationTimeline({
   turns,
   interim,
-  restoredState,
 }: {
   turns: ConversationTurn[];
   interim: string;
-  restoredState: string;
 }) {
   const [historyExpanded, setHistoryExpanded] = useState(false);
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const hiddenCount = Math.max(0, turns.length - 2);
-  const visibleTurns = historyExpanded ? turns : turns.slice(-2);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const hiddenCount = Math.max(0, turns.length - 3);
+  const visibleTurns = historyExpanded ? turns : turns.slice(-3);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [turns, interim]);
 
   return (
-    <section className="conversation-panel" data-collapsed={panelCollapsed} aria-labelledby="conversation-title">
+    <section className="conversation-panel" aria-labelledby="conversation-title">
       <div className="section-heading-row">
         <div>
           <p className="section-label">Live transcript</p>
           <h2 id="conversation-title">Conversation</h2>
         </div>
-        <div className="panel-heading-actions">
-          {restoredState && <span className="restored-chip">{restoredState}</span>}
-          <button className="panel-control" type="button" onClick={() => setPanelCollapsed((value) => !value)} aria-expanded={!panelCollapsed}>
-            {panelCollapsed ? "Open" : "Collapse"}
-          </button>
-        </div>
       </div>
-
-      {!panelCollapsed && <div className="conversation-scroll" aria-live="polite" aria-relevant="additions text">
+      <div className="conversation-scroll" aria-live="polite" ref={scrollRef}>
         {hiddenCount > 0 && (
-          <button className="history-toggle" type="button" onClick={() => setHistoryExpanded((value) => !value)}>
-            {historyExpanded ? "Show latest exchange" : `Show history (${hiddenCount})`}
+          <button className="history-toggle" onClick={() => setHistoryExpanded((value) => !value)} type="button">
+            {historyExpanded ? "Show latest exchange" : `Show earlier conversation (${hiddenCount})`}
           </button>
         )}
         {visibleTurns.map((turn) => (
           <article className="conversation-turn" data-role={turn.role} key={turn.id}>
             <div className="turn-meta">
-              <strong>{turn.role === "assistant" ? "Assistant" : "You"}</strong>
+              <strong>{turn.role === "assistant" ? "Paytm teammate" : "Merchant"}</strong>
               <time>{new Date(turn.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
             </div>
             <p>{turn.text || <span className="response-skeleton">Preparing a response</span>}</p>
             {turn.role === "assistant" && turn.text && (
               <footer className="turn-evidence">
-                <span className="provenance" data-type={turn.provenance ?? "general"}>
-                  {provenanceLabel(turn.provenance)}
-                </span>
-                {typeof turn.metrics?.serverResponseMs === "number" && (
-                  <span>{turn.metrics.serverResponseMs} ms server</span>
-                )}
+                <span className="provenance" data-type={turn.provenance ?? "general"}>{provenanceLabel(turn.provenance)}</span>
                 {turn.interrupted && <span className="interrupted-tag">Interrupted</span>}
               </footer>
             )}
@@ -104,256 +113,272 @@ function ConversationTimeline({
         ))}
         {interim && (
           <article className="conversation-turn interim-turn" data-role="user">
-            <div className="turn-meta"><strong>You</strong><span>listening</span></div>
+            <div className="turn-meta"><strong>Merchant</strong><span>Listening</span></div>
             <p>{interim}</p>
           </article>
         )}
         {!turns.length && !interim && (
           <div className="teaching-empty conversation-empty">
-            <span className="empty-mark">V</span>
-            <strong>Your conversation will appear here</strong>
-            <p>Start listening and ask the assistant anything. Add a source only when you want grounded, domain-specific answers.</p>
+            <span className="empty-mark">P</span>
+            <strong>Your call transcript will appear here</strong>
+            <p>The language gate runs first. Choose English, Hindi, or Kannada during the call.</p>
           </div>
         )}
-      </div>}
+      </div>
     </section>
   );
 }
 
 export default function HomePage() {
   const [entered, setEntered] = useState(false);
-  const [workspace, setWorkspace] = useState<"session" | "architecture">("session");
-  const [sourceOpen, setSourceOpen] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [workspace, setWorkspace] = useState<"session" | "admin">("session");
+  const [merchantPickerOpen, setMerchantPickerOpen] = useState(false);
+  const [merchants, setMerchants] = useState<DemoMerchant[]>([]);
+  const [merchantLoadError, setMerchantLoadError] = useState("");
+  const [selectedMerchant, setSelectedMerchant] = useState<DemoMerchant | null>(null);
+  const apiBase = useMemo(() => resolveApiUrl().replace(/\/$/, ""), []);
   const voice = useVoice();
+  const { callOutcome, selectMerchant } = voice;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${apiBase}/demo/merchants`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Merchant list request failed (${response.status})`);
+        return response.json();
+      })
+      .then((payload: unknown) => {
+        if (!Array.isArray(payload) || !payload.every(isDemoMerchant)) {
+          throw new Error("Merchant list response was invalid");
+        }
+        setMerchants(payload);
+        setMerchantLoadError("");
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setMerchantLoadError(reason instanceof Error ? reason.message : "Could not load demo merchants.");
+      });
+    return () => controller.abort();
+  }, [apiBase]);
+
+  useEffect(() => {
+    if (callOutcome !== "closed:opt_out") return;
+    const controller = new AbortController();
+    fetch(`${apiBase}/demo/merchants`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Merchant refresh failed (${response.status})`);
+        return response.json();
+      })
+      .then((payload: unknown) => {
+        if (!Array.isArray(payload) || !payload.every(isDemoMerchant)) {
+          throw new Error("Merchant refresh response was invalid");
+        }
+        setMerchants(payload);
+        const updated = payload.find((merchant) => merchant.merchant_id === selectedMerchant?.merchant_id);
+        if (updated) {
+          setSelectedMerchant(updated);
+          selectMerchant(updated);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setMerchantLoadError(reason instanceof Error ? reason.message : "Could not refresh merchant opt-out status.");
+      });
+    return () => controller.abort();
+  }, [apiBase, callOutcome, selectedMerchant?.merchant_id, selectMerchant]);
 
   const latestAssistant = useMemo(
     () => [...voice.conversation].reverse().find((turn) => turn.role === "assistant"),
     [voice.conversation],
   );
 
-  const startVia = () => {
+  const startVia = () => setMerchantPickerOpen(true);
+
+  const chooseMerchant = (merchant: DemoMerchant) => {
+    setSelectedMerchant(merchant);
+    voice.selectMerchant(merchant);
+    setMerchantPickerOpen(false);
+    setWorkspace("session");
     setEntered(true);
-    void voice.connect();
+    void voice.connect(merchant);
   };
 
-  const submitUpload = (event: FormEvent) => {
-    event.preventDefault();
-    if (file) void voice.uploadDocument(file);
-  };
-
-  const chooseDemo = (slug: string) => {
-    void voice.loadDemoDocument(slug);
-    setEntered(true);
+  const returnHome = () => {
+    voice.disconnect();
+    setEntered(false);
+    setWorkspace("session");
   };
 
   return (
     <main className="app-shell">
-      <a href="#main-content" className="skip-link">Skip to main content</a>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <header className="site-header">
-        <button className="brand" type="button" onClick={() => setEntered(false)} aria-label="Paytm Voice Teammate home">
-          <span className="brand-mark">V</span>
-          <span><strong>Paytm</strong><small>Voice teammate</small></span>
+        <button aria-label="Paytm Voice Teammate home" className="brand" onClick={returnHome} type="button">
+          <PaytmLogo />
+          <span><strong>Voice Teammate</strong><small>Merchant support demo</small></span>
         </button>
-
         {entered ? (
           <div className="header-actions">
-            <div className="workspace-switch" role="tablist" aria-label="Workspace">
-              <button
-                role="tab"
-                aria-selected={workspace === "session"}
-                onClick={() => setWorkspace("session")}
-              >
-                Voice session
-              </button>
-              <button
-                role="tab"
-                aria-selected={workspace === "architecture"}
-                onClick={() => setWorkspace("architecture")}
-              >
-                Architecture
-              </button>
+            <div aria-label="Workspace" className="workspace-switch" role="tablist">
+              <button aria-selected={workspace === "session"} onClick={() => setWorkspace("session")} role="tab" type="button">Call</button>
+              <button aria-selected={workspace === "admin"} onClick={() => setWorkspace("admin")} role="tab" type="button">Admin</button>
             </div>
-            <button className="source-trigger" type="button" onClick={() => setSourceOpen((open) => !open)}>
-              <span className="status-dot" data-status={voice.activeDocument ? "ready" : "idle"} />
-              {voice.activeDocument ? voice.activeDocument.filename : "Add knowledge"}
-            </button>
+            {selectedMerchant && (
+              <div className="session-identity">
+                <span className="status-dot" data-status={voice.connected ? "ready" : "idle"} />
+                <span>Simulating: <strong>{selectedMerchant.name}</strong></span>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="header-proof"><span className="status-dot" data-status={voice.systemStatus ? "ready" : "degraded"} />Voice-first, interruptible, grounded</div>
+          <div className="header-proof"><span className="status-dot" data-status={voice.systemStatus ? "ready" : "degraded"} />AI-powered outbound support for merchants</div>
         )}
       </header>
 
-      {!entered ? (
-        <div id="main-content" className="landing-view">
+      {merchantPickerOpen && (
+        <div className="merchant-modal-backdrop" onClick={() => setMerchantPickerOpen(false)}>
+          <section
+            aria-labelledby="merchant-picker-title"
+            aria-modal="true"
+            className="merchant-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="merchant-modal-header">
+              <div>
+                <p className="section-label">Outbound demo call</p>
+                <h2 id="merchant-picker-title">Choose a merchant to call</h2>
+                <p>The scenario provides account context. The merchant chooses a language live on the call.</p>
+              </div>
+              <button aria-label="Close merchant picker" className="icon-text-button" onClick={() => setMerchantPickerOpen(false)} type="button">Close</button>
+            </div>
+            {merchantLoadError && <div className="inline-error" role="alert">{merchantLoadError}</div>}
+            <MerchantChooser
+              merchants={merchants}
+              selectedMerchantId={selectedMerchant?.merchant_id}
+              onSelect={chooseMerchant}
+            />
+            <p className="recommended-note">Lakshmi is recommended for the refund demo. No persona language is preselected.</p>
+          </section>
+        </div>
+      )}
+
+      {!entered || !selectedMerchant ? (
+        <div className="landing-view" id="main-content">
           <section className="hero-copy">
-            <p className="section-label">Voice interruption agent</p>
-            <h1>Speak naturally.<br /><span>The teammate keeps the thread.</span></h1>
+            <p className="section-label">Paytm Voice Teammate</p>
+            <h1>Support that speaks<br /><span>your merchant&apos;s language.</span></h1>
             <p className="hero-lede">
-              A voice mentor that listens in real time, adapts to how you feel, remembers what matters, and can become an expert in any document you choose.
+              AI-powered outbound support for merchants. Speaks English, Hindi, and Kannada while helping with QR issues, settlements, refunds, and soundbox support.
             </p>
             <div className="hero-actions">
-              <button className="primary-action large" type="button" onClick={startVia}>
-                <span className="button-status-dot" />Start the teammate
+              <button className="primary-action large" onClick={startVia} type="button">
+                <span className="button-status-dot" />Start demo call
               </button>
-              <button className="quiet-action large" type="button" onClick={() => document.getElementById("demo-sources")?.scrollIntoView({ behavior: "smooth" })}>
-                Explore demo sources
+              <button className="quiet-action large" onClick={() => document.getElementById("demo-merchants")?.scrollIntoView({ behavior: "smooth" })} type="button">
+                Explore scenarios
               </button>
             </div>
-            <p className="no-source-note">No document required. The assistant begins in general mode.</p>
+            <p className="no-source-note">Every demo starts with the live language gate. No language is preloaded.</p>
           </section>
 
-          <section className="hero-orb" aria-label={`Assistant is ${voice.voiceState}`}>
-            <div className="landing-orb" data-state="idle" aria-hidden="true">
-              <span className="landing-orb-letter">V</span>
-            </div>
-            <div className="hero-status"><span>Listening</span><span>Understanding</span><span>Responding</span></div>
+          <section aria-label="Paytm voice agent" className="hero-orb">
+            <div aria-hidden="true" className="landing-orb"><span className="landing-orb-letter">P</span></div>
+            <div className="hero-status"><span>Instant transcription</span><span>3 languages</span><span>Merchant support</span></div>
           </section>
 
-          <section className="landing-proof" aria-label="Assistant capabilities">
-            <div><strong>Interrupt without losing the thread</strong><p>The assistant pauses, handles the side question, and resumes from the right place.</p></div>
-            <div><strong>Bring any working context</strong><p>PDF, CSV, or JSON changes the assistant&apos;s role while provenance keeps answers honest.</p></div>
-            <div><strong>Ground answers in your documents</strong><p>Add a price list, policy or FAQ and the assistant answers from it, citing the source.</p></div>
+          <section aria-label="Paytm agent features" className="landing-proof">
+            <div><strong>QR support</strong><p>Check merchant QR status and create a support ticket when needed.</p></div>
+            <div><strong>Settlement queries</strong><p>Explain pending payments and recognize when an issue needs escalation.</p></div>
+            <div><strong>Soundbox and refunds</strong><p>Troubleshoot devices, initiate a demo refund, or honor an opt-out request.</p></div>
           </section>
 
-          <section className="demo-section" id="demo-sources">
+          <section className="demo-section" id="demo-merchants">
             <div className="demo-intro">
-              <p className="section-label">Optional knowledge</p>
-              <h2>Give the assistant a world to work in.</h2>
-              <p>Use a prepared source for the fastest demo, upload your own, or continue without one.</p>
-              <form className="upload-inline" onSubmit={submitUpload}>
-                <input
-                  ref={fileInputRef}
-                  id="landing-file"
-                  type="file"
-                  accept=".pdf,.csv,.json,application/pdf,text/csv,application/json"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                />
-                <button className="quiet-action" type="button" onClick={() => fileInputRef.current?.click()}>
-                  {file ? file.name : "Choose your file"}
-                </button>
-                {file && <button className="primary-action compact" disabled={voice.uploading}>{voice.uploading ? "Indexing..." : "Upload"}</button>}
-              </form>
-              {voice.uploadError && <div className="inline-error dismissible" role="alert"><span>{voice.uploadError}</span><button type="button" onClick={voice.dismissUploadError} aria-label="Dismiss upload error">x</button></div>}
+              <p className="section-label">Merchant scenarios</p>
+              <h2>Choose a merchant to call.</h2>
+              <p>Each card opens the persona picker. Lakshmi&apos;s refund flow is the recommended demo starting point.</p>
             </div>
-            <SourceOptions
-              demos={voice.demoDocuments}
-              uploading={voice.uploading}
-              activeSlug={voice.activeDocument?.demo_slug}
-              onDemo={chooseDemo}
+            {merchantLoadError && <div className="inline-error" role="alert">{merchantLoadError}</div>}
+            <MerchantChooser
+              merchants={merchants}
+              selectedMerchantId={selectedMerchant?.merchant_id}
+              onSelect={() => setMerchantPickerOpen(true)}
             />
           </section>
         </div>
       ) : (
-        <div id="main-content" className="workspace-view">
-          {sourceOpen && (
-            <aside className="source-drawer" aria-labelledby="source-drawer-title">
-              <div className="section-heading-row">
-                <div><p className="section-label">Optional context</p><h2 id="source-drawer-title">Knowledge source</h2></div>
-                <button className="icon-text-button" type="button" onClick={() => setSourceOpen(false)}>Close</button>
-              </div>
-              {voice.activeDocument ? (
-                <div className="active-source-detail">
-                  <span className="file-format">{voice.activeDocument.source_type.toUpperCase()}</span>
-                  <div><strong>{voice.activeDocument.filename}</strong><p>{voice.activeDocument.domain_profile.professional_role}</p></div>
-                  <dl><div><dt>Domain</dt><dd>{voice.activeDocument.domain_profile.domain}</dd></div><div><dt>Knowledge chunks</dt><dd>{voice.activeDocument.chunks}</dd></div></dl>
-                  <button className="danger-quiet" type="button" onClick={voice.removeDocument}>Remove source</button>
-                </div>
-              ) : (
-                <div className="general-mode-note"><strong>General mode is active</strong><p>The assistant can talk now. Add a source only for grounded domain expertise.</p></div>
-              )}
-              <SourceOptions demos={voice.demoDocuments} uploading={voice.uploading} activeSlug={voice.activeDocument?.demo_slug} onDemo={chooseDemo} />
-              <form className="drawer-upload" onSubmit={submitUpload}>
-                <label htmlFor="workspace-file">Upload PDF, CSV, or JSON</label>
-                <input id="workspace-file" type="file" accept=".pdf,.csv,.json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-                <button className="primary-action compact" disabled={!file || voice.uploading}>{voice.uploading ? "Preparing source..." : "Upload and activate"}</button>
-              </form>
-              {voice.uploadError && <div className="inline-error dismissible" role="alert"><span>{voice.uploadError}</span><button type="button" onClick={voice.dismissUploadError} aria-label="Dismiss upload error">x</button></div>}
-            </aside>
-          )}
-
-          {workspace === "session" ? (
-            <div className="session-workspace">
+        <div className="workspace-view" id="main-content">
+          {workspace === "admin" ? (
+            <AdminDashboard apiBase={apiBase} />
+          ) : (
+            <CallView
+              connected={voice.connected}
+              connecting={voice.connecting}
+              language={voice.callLanguage.locked ? voice.callLanguage.display : ""}
+              merchant={selectedMerchant}
+              onEndCall={voice.disconnect}
+              onEscalate={voice.requestEscalation}
+            >
               <section className="session-main">
                 <VoiceOrb
-                  state={voice.voiceState}
                   connected={voice.connected}
                   connecting={voice.connecting}
                   listening={voice.listening}
-                  onConnect={() => void voice.connect()}
+                  onConnect={() => void voice.connect(selectedMerchant)}
                   onDisconnect={voice.disconnect}
                   onStartListening={() => void voice.startListening()}
                   onStopListening={voice.stopListening}
+                  state={voice.voiceState}
                 />
-
                 <div className="live-answer" aria-live="polite">
-                  <p className="section-label">Assistant&apos;s current response</p>
-                  <p>{voice.assistantResponse || latestAssistant?.text || "Ask a question when you're ready."}</p>
-                  {latestAssistant?.provenance && (
-                    <span className="provenance" data-type={latestAssistant.provenance}>{provenanceLabel(latestAssistant.provenance)}</span>
-                  )}
+                  <p className="section-label">Paytm teammate</p>
+                  <p>{voice.assistantResponse || latestAssistant?.text || "The call will begin with a language choice."}</p>
                 </div>
-
                 <div className="session-signals">
                   <div><span className="status-dot" data-status={voice.connected ? "ready" : "idle"} /><span>Connection</span><strong>{voice.connected ? "Live" : "Offline"}</strong></div>
                   <div><span className="status-dot" data-status={voice.callLanguage.locked ? "ready" : "degraded"} /><span>Language</span><strong>{voice.callLanguage.display}</strong></div>
                   <div><span className="status-dot" data-status={voice.sttProvider === "deepgram" ? "ready" : "degraded"} /><span>Transcription</span><strong>{voice.sttProvider}</strong></div>
-                  <div><span className="status-dot" data-status={voice.activeDocument ? "ready" : "idle"} /><span>Knowledge</span><strong>{voice.activeDocument ? voice.activeDocument.domain_profile.domain : "General"}</strong></div>
-                  {voice.toolCallLog.length > 0 && (
-                    <div style={{ gridColumn: "1/-1", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "0.5rem", marginTop: "0.25rem" }}>
-                      <span style={{ opacity: 0.6, fontSize: "0.75rem" }}>Recent tool calls</span>
-                      {voice.toolCallLog.slice(0, 3).map((call: ToolCall, i: number) => (
-                        <div key={i} style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.25rem", fontSize: "0.8rem" }}>
-                          <span className={`status-dot`} data-status={call.status === "ok" ? "ready" : "degraded"} />
-                          <span>{call.tool}</span>
-                          <span style={{ opacity: 0.6 }}>{call.latency_ms}ms</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div><span className="status-dot" data-status={selectedMerchant ? "ready" : "idle"} /><span>Merchant</span><strong>{selectedMerchant.name} · {selectedMerchant.merchant_id}</strong></div>
                 </div>
+                {voice.toolCallLog.length > 0 && (
+                  <section className="tool-call-panel" aria-label="Recent tool calls">
+                    <p className="section-label">Tool calls</p>
+                    {voice.toolCallLog.slice(0, 5).map((call, index) => (
+                      <div className="tool-call-row" key={`${call.tool}-${call.ts}-${index}`}>
+                        <span className="status-dot" data-status={call.status === "ok" ? "ready" : "degraded"} />
+                        <strong>{call.tool}</strong><span>{call.status}</span><small>{call.latency_ms} ms</small>
+                      </div>
+                    ))}
+                  </section>
+                )}
               </section>
-
-              <ConversationTimeline turns={voice.conversation} interim={voice.interimTranscript} restoredState={voice.restoredState} />
-            </div>
-          ) : (
-            <ArchitectureDashboard
-              stages={voice.pipelineStages}
-              conversation={voice.conversation}
-              systemStatus={voice.systemStatus}
-              activeDocument={voice.activeDocument}
-              voiceState={voice.voiceState}
-              interruptCount={voice.interruptCount}
-              sessionId={voice.sessionId}
-              onUpdateSettings={voice.updateSystemSettings}
-            />
-
-          )}
-
-          {(voice.voiceError || voice.systemError) && (
-            <div className="error-banner" role="alert">
-              <div><strong>The assistant needs attention</strong><p>{voice.voiceError || voice.systemError}</p></div>
-              <div className="error-actions"><button className="quiet-action" type="button" onClick={() => void voice.checkSystem()}>Check again</button><button className="close-error" type="button" onClick={() => { voice.dismissVoiceError(); voice.dismissSystemError(); }} aria-label="Dismiss error">x</button></div>
-            </div>
-          )}
-
-          {voice.fallbackRequired && (
-            <section className="fallback-banner" aria-labelledby="fallback-title">
-              <div><p className="section-label">Transcription fallback</p><h2 id="fallback-title">Continue with the lower-accuracy local model?</h2><p>{voice.fallbackMessage}</p></div>
-              <div><button className="primary-action compact" onClick={() => voice.chooseWhisperFallback("continue")}>Continue with Whisper</button><button className="quiet-action" onClick={() => voice.chooseWhisperFallback("stop")}>Stop and check</button></div>
-            </section>
-          )}
-
-          {voice.escalation && (
-            <section className="fallback-banner" aria-labelledby="escalation-title" style={{ borderColor: "rgba(255,180,0,0.4)", background: "rgba(255,180,0,0.06)" }}>
-              <div>
-                <p className="section-label">Human handoff</p>
-                <h2 id="escalation-title">Connecting to human support</h2>
-                <p>{voice.escalation.reason === "merchant_requested_human" ? "The merchant has requested a human colleague." : "Escalating after repeated complaint — connecting to support."}</p>
-              </div>
-              <div><button className="quiet-action" onClick={voice.dismissEscalation} aria-label="Dismiss escalation">Dismiss</button></div>
-            </section>
+              <ConversationTimeline interim={voice.interimTranscript} turns={voice.conversation} />
+              {(voice.voiceError || voice.systemError) && (
+                <div className="error-banner" role="alert">
+                  <div><strong>The voice session needs attention</strong><p>{voice.voiceError || voice.systemError}</p></div>
+                  <div className="error-actions">
+                    <button className="quiet-action" onClick={() => void voice.checkSystem()} type="button">Check again</button>
+                    <button aria-label="Dismiss error" className="close-error" onClick={() => { voice.dismissVoiceError(); voice.dismissSystemError(); }} type="button">×</button>
+                  </div>
+                </div>
+              )}
+              {voice.fallbackRequired && (
+                <section className="fallback-banner" aria-labelledby="fallback-title">
+                  <div><p className="section-label">Transcription fallback</p><h2 id="fallback-title">Continue with the local model?</h2><p>{voice.fallbackMessage}</p></div>
+                  <div>
+                    <button className="primary-action compact" onClick={() => voice.chooseWhisperFallback("continue")} type="button">Continue with Whisper</button>
+                    <button className="quiet-action" onClick={() => voice.chooseWhisperFallback("stop")} type="button">Stop and check</button>
+                  </div>
+                </section>
+              )}
+              {voice.escalation && (
+                <div className="escalation-banner" role="status">
+                  <strong>Human follow-up requested</strong>
+                  <span>{voice.escalation.reason === "merchant_requested_human" ? "The merchant asked to speak with a senior colleague." : "This call has been flagged for human follow-up."}</span>
+                </div>
+              )}
+            </CallView>
           )}
         </div>
       )}

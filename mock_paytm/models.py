@@ -1,7 +1,7 @@
 """Pydantic response models for the mock Paytm API."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 
@@ -33,6 +33,24 @@ class RefundResult(BaseModel):
     status: str             # "processed" | "initiated" | "failed"
     amount: float
     processed_date: Optional[str] = None
+
+
+class TicketRequest(BaseModel):
+    merchant_id: str
+    issue_type: str
+    description: str = ""
+    priority: Literal["normal", "high"] = "normal"
+
+
+class TicketResult(BaseModel):
+    ticket_id: str
+    merchant_id: str
+    issue_type: str
+    description: str
+    priority: str
+    status: str
+    eta_hours: int
+    created_at: str
 
 
 class SoundboxHealth(BaseModel):

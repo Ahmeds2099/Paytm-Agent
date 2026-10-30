@@ -61,6 +61,62 @@ PHRASES: dict[str, dict[str, str]] = {
         "kn-IN": "ಸರಿ, ನಾನು ನಿಮ್ಮನ್ನು ಒಬ್ಬ ಸಹೋದ್ಯೋಗಿಗೆ ಸಂಪರ್ಕಿಸುತ್ತೇನೆ.",
         "en-IN": "Okay, I will connect you to a human colleague.",
     },
+    "demo_open_opt_out": {
+        "hi-IN": (
+            "हम Paytm से आपके व्यवसाय के लिए एक विशेष ऋण ऑफ़र के बारे में "
+            "बात करने के लिए कॉल कर रहे हैं। क्या आप इसके बारे में सुनना चाहेंगी?"
+        ),
+        "kn-IN": (
+            "ನಿಮ್ಮ ವ್ಯವಹಾರಕ್ಕಾಗಿ ವಿಶೇಷ ಸಾಲದ ಆಫರ್ ಕುರಿತು ಮಾತನಾಡಲು Paytm ನಿಂದ ಕರೆ "
+            "ಮಾಡುತ್ತಿದ್ದೇವೆ. ಇದರ ಬಗ್ಗೆ ಕೇಳಲು ಆಸಕ್ತಿ ಇದೆಯೇ?"
+        ),
+        "en-IN": (
+            "We're calling from Paytm with a promotional loan offer for your "
+            "business. Would you be interested in hearing more?"
+        ),
+    },
+    "demo_opt_out_ack": {
+        "hi-IN": (
+            "ठीक है, मैंने इस ऋण ऑफ़र के लिए आपकी पसंद दर्ज कर ली है और आगे "
+            "प्रचार संबंधी कॉल नहीं किए जाएंगे। धन्यवाद। अलविदा।"
+        ),
+        "kn-IN": (
+            "ಸರಿ, ಈ ಸಾಲದ ಆಫರ್‌ಗಾಗಿ ನಿಮ್ಮ ಆಯ್ಕೆಯನ್ನು ದಾಖಲಿಸಿದ್ದೇನೆ. ಇನ್ನು ಮುಂದೆ "
+            "ಪ್ರಚಾರದ ಕರೆಗಳು ಬರುವುದಿಲ್ಲ. ಧನ್ಯವಾದಗಳು. ನಮಸ್ಕಾರ."
+        ),
+        "en-IN": (
+            "Understood. I've recorded your choice and you will not receive "
+            "further promotional calls. Thank you. Goodbye."
+        ),
+    },
+    "opt_out_save_failed": {
+        "hi-IN": (
+            "माफ़ कीजिए, मैं इस अनुरोध को डेमो रिकॉर्ड में सहेज नहीं पाया। "
+            "मैं अभी यह कॉल समाप्त कर रहा हूँ।"
+        ),
+        "kn-IN": (
+            "ಕ್ಷಮಿಸಿ, ಈ ವಿನಂತಿಯನ್ನು ಡೆಮೋ ದಾಖಲೆಯಲ್ಲಿ ಉಳಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. "
+            "ನಾನು ಈಗ ಈ ಕರೆಯನ್ನು ಮುಕ್ತಾಯಗೊಳಿಸುತ್ತೇನೆ."
+        ),
+        "en-IN": (
+            "I'm sorry, I couldn't save this request in the demo record. "
+            "I'm ending this call now."
+        ),
+    },
+    "settlement_priority_offer": {
+        "hi-IN": (
+            "मैं समझती हूँ कि आपको आज पैसों की ज़रूरत है। क्या आप चाहेंगी "
+            "कि मैं इसे प्राथमिकता टिकट के रूप में दर्ज करूँ?"
+        ),
+        "kn-IN": (
+            "ನಿಮಗೆ ಇಂದು ಹಣದ ಅಗತ್ಯವಿದೆ ಎಂಬುದನ್ನು ನಾನು ಅರ್ಥಮಾಡಿಕೊಂಡಿದ್ದೇನೆ. "
+            "ಇದನ್ನು ಆದ್ಯತೆಯ ಟಿಕೆಟ್ ಆಗಿ ದಾಖಲಿಸಬೇಕೇ?"
+        ),
+        "en-IN": (
+            "I understand you need the money today. Would you like me to "
+            "raise a priority support ticket?"
+        ),
+    },
 }
 
 LANGUAGE_NAMES: dict[str, str] = {

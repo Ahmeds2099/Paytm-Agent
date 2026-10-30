@@ -16,6 +16,7 @@ from mock_paytm.routes.qr import router as qr_router
 from mock_paytm.routes.settlement import router as settlement_router
 from mock_paytm.routes.refund import router as refund_router
 from mock_paytm.routes.soundbox import router as soundbox_router
+from mock_paytm.routes.tickets import router as tickets_router
 
 app = FastAPI(
     title="Mock Paytm API",
@@ -34,6 +35,7 @@ app.include_router(qr_router)
 app.include_router(settlement_router)
 app.include_router(refund_router)
 app.include_router(soundbox_router)
+app.include_router(tickets_router)
 
 
 @app.get("/health", response_model=HealthResponse)

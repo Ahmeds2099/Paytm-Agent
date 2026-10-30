@@ -11,6 +11,7 @@ import {
 import type {
     ConversationTurn,
     DemoDocument,
+    DemoMerchant,
     EscalationEvent,
     PipelineStage,
     SystemStatus,
@@ -133,9 +134,12 @@ export function useVoice() {
     const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
     const [systemError, setSystemError] = useState("");
     const [demoDocuments, setDemoDocuments] = useState<DemoDocument[]>([]);
+    const [selectedMerchant, setSelectedMerchant] = useState<DemoMerchant | null>(null);
     // Phase 4
     const [toolCallLog, setToolCallLog] = useState<ToolCall[]>([]);
     const [escalation, setEscalation] = useState<EscalationEvent | null>(null);
+    const [callOutcome, setCallOutcome] = useState("");
+    const selectedMerchantRef = useRef<DemoMerchant | null>(null);
 
     const apiBase = useMemo(() => resolveApiUrl().replace(/\/$/, ""), []);
 
@@ -203,12 +207,38 @@ export function useVoice() {
         }
     }, []);
 
-    const connect = useCallback(async () => {
+    const selectMerchant = useCallback((merchant: DemoMerchant | null) => {
+        selectedMerchantRef.current = merchant;
+        setSelectedMerchant(merchant);
+    }, []);
+
+    const connect = useCallback(async (merchantOverride?: DemoMerchant | null) => {
+        const merchant = merchantOverride ?? selectedMerchantRef.current;
+        if (merchant) {
+            selectedMerchantRef.current = merchant;
+            setSelectedMerchant(merchant);
+        }
+
         if (socketRef.current) {
             return;
         }
 
         setVoiceError("");
+        setCallOutcome("");
+        setSessionId("");
+        setTranscript("");
+        setInterimTranscript("");
+        setAssistantResponse("");
+        setConversation([]);
+        setPipelineStages([]);
+        setTurnContexts({});
+        setTurnMetrics({});
+        setInterruptCount(0);
+        setToolCallLog([]);
+        setEscalation(null);
+        setFallbackRequired(false);
+        setFallbackMessage("");
+        setCallLanguage({ code: "auto", display: "Not chosen", locked: false });
         setConnecting(true);
         setVoiceState("connecting");
         setRestoredState("New session");
@@ -268,9 +298,10 @@ export function useVoice() {
             setConnected(true);
             setVoiceState("idle");
             setVoiceError("");
-            const clientId = stableClientId();
-            const saved = localStorage.getItem(DOCUMENT_KEY);
+            const merchant = selectedMerchantRef.current;
+            const clientId = merchant?.merchant_id ?? stableClientId();
             let documentIds: string[] = [];
+            const saved = merchant ? null : localStorage.getItem(DOCUMENT_KEY);
             if (saved) {
                 try {
                     const document = JSON.parse(saved) as UploadedDocument;
@@ -279,7 +310,16 @@ export function useVoice() {
                     localStorage.removeItem(DOCUMENT_KEY);
                 }
             }
-            socket.initializeSession(clientId, documentIds);
+            const merchantProfile = merchant ? {
+                merchant_id: merchant.merchant_id,
+                name: merchant.name,
+                business_name: merchant.business_name,
+                city: merchant.city,
+                scenario_id: merchant.scenario_id,
+                scenario_label: merchant.scenario_label,
+                avatar: merchant.avatar,
+            } : undefined;
+            socket.initializeSession(clientId, documentIds, merchantProfile);
         };
 
         socket.onClose = () => {
@@ -506,7 +546,7 @@ export function useVoice() {
         };
         socket.onToolAction = (action) => {
             setPipelineStages((stages) => mergePipelineStage(stages, {
-                stage: "tool_action" as any,
+                stage: "tool_action",
                 status: action.status,
                 durationMs: action.durationMs,
                 updatedAt: Date.now(),
@@ -565,7 +605,7 @@ export function useVoice() {
             const entry: ToolCall = { ...data, status: data.status as ToolCall["status"], ts: Date.now() };
             setToolCallLog((log) => [entry, ...log].slice(0, 10));
             setPipelineStages((stages) => mergePipelineStage(stages, {
-                stage: "intent" as any,
+                stage: "intent",
                 status: `tool:${data.tool} (${data.status})`,
                 durationMs: data.latency_ms,
                 updatedAt: Date.now(),
@@ -575,6 +615,15 @@ export function useVoice() {
         // Phase 4: escalation
         socket.onEscalation = (reason: string) => {
             setEscalation({ reason, ts: Date.now() });
+        };
+        socket.onCallClosed = (outcome) => {
+            setCallOutcome(outcome);
+            socket.disconnect();
+        };
+        socket.onCallBlocked = (message) => {
+            setVoiceError(message);
+            setVoiceState("error");
+            socket.disconnect();
         };
 
         setSTTProvider("initializing");
@@ -603,6 +652,12 @@ export function useVoice() {
         nextPlaybackTimeRef.current = 0;
         setVoiceState("idle");
     }, [stopPlayback]);
+
+    const requestEscalation = useCallback(() => {
+        if (socketRef.current?.connected) {
+            socketRef.current.requestEscalation();
+        }
+    }, []);
 
     const startListening = useCallback(async () => {
         if (!socketRef.current?.connected) {
@@ -786,9 +841,12 @@ export function useVoice() {
         systemStatus,
         systemError,
         demoDocuments,
+        selectedMerchant,
+        selectMerchant,
         apiBase,
         connect,
         disconnect,
+        requestEscalation,
         startListening,
         stopListening,
         chooseWhisperFallback,
@@ -802,6 +860,7 @@ export function useVoice() {
         updateSystemSettings,
         toolCallLog,
         escalation,
+        callOutcome,
         dismissEscalation: () => setEscalation(null),
     };
 }

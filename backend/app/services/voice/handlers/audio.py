@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 
@@ -40,10 +41,21 @@ from app.services.paytm_tools import (
     settlement_status,
     trigger_refund,
     soundbox_health,
+    raise_ticket,
     spoken_summary_for_language,
 )
 from app.services.audit_log import audit_tool_call
+from app.services.call_log import (
+    end_call,
+    record_intent,
+    record_tool,
+    record_turn,
+    start_call,
+)
+from app.services.demo_opt_out import is_opted_out, record_opt_out
+from app.services.demo_scenarios import get_scenario
 
+_log = logging.getLogger(__name__)
 
 DECLINE_ACK_TEXT = (
     "Okay."
@@ -820,6 +832,7 @@ class AudioHandler:
                         ),
                         interruption_context=interruption_context,
                         language=session.effective_language,
+                        scenario_context=session.metadata.get("scenario_context"),
                     ),
                 )
 
@@ -923,6 +936,14 @@ class AudioHandler:
             llm,
         )
         session.last_intent = result.label
+        call_id = session.metadata.get("call_id")
+        if call_id:
+            record_intent(
+                call_id,
+                intent=result.label,
+                language=session.effective_language,
+                repeat_complaint_count=session.repeat_complaint_count,
+            )
 
         # Emit intent as a pipeline stage event for the dashboard.
         await connection_manager.send_json(
@@ -941,17 +962,16 @@ class AudioHandler:
 
         # --- Escalation-triggering intents ---
         if result.label == "opt_out":
-            session.escalated = True
-            lang = session.effective_language or "en-IN"
-            self._schedule_phrases(
+            await self._close_opt_out(
                 session,
                 connection_manager,
-                [("opt_out", lang)],
+                session.effective_language or "en-IN",
             )
             return True
 
         if result.label == "human_request":
             session.escalated = True
+            session.metadata["outcome"] = "escalated:human_requested"
             lang = session.effective_language or "en-IN"
             self._schedule_phrases(
                 session,
@@ -971,6 +991,7 @@ class AudioHandler:
             session.repeat_complaint_count += 1
             if session.repeat_complaint_count >= 2:
                 session.escalated = True
+                session.metadata["outcome"] = "escalated:repeated_complaint"
                 lang = session.effective_language or "en-IN"
                 self._schedule_phrases(
                     session,
@@ -998,27 +1019,62 @@ class AudioHandler:
         tool_result = None
         tool_args: dict = {}
         tool_name = ""
+        scenario = session.metadata.get("scenario", {})
 
         if result.label == "settlement_query":
-            txn_id = slots.get("transaction_id", "TXN002")  # default demo
+            txn_id = (
+                slots.get("transaction_id")
+                or scenario.get("transaction_id")
+                or "TXN002"
+            )
             tool_args = {"txn_id": txn_id}
             tool_name = "settlement_status"
             tool_result = await asyncio.to_thread(settlement_status, txn_id)
 
+        elif (
+            result.label == "confirmation_yes"
+            and session.metadata.get("awaiting_settlement_priority")
+        ):
+            session.metadata["awaiting_settlement_priority"] = False
+            merchant_id = session.metadata.get("merchant_id") or "MID002"
+            tool_args = {
+                "merchant_id": merchant_id,
+                "issue_type": "settlement_pending",
+                "priority": "high",
+            }
+            tool_name = "raise_ticket"
+            tool_result = await asyncio.to_thread(
+                raise_ticket,
+                str(merchant_id),
+                "settlement_pending",
+                "Merchant needs an urgent follow-up for a pending settlement.",
+                "high",
+            )
+
+        elif (
+            result.label == "confirmation_no"
+            and session.metadata.get("awaiting_settlement_priority")
+        ):
+            session.metadata["awaiting_settlement_priority"] = False
+
         elif result.label == "device_issue" or topic == "soundbox_issue":
-            device_id = slots.get("device_id", "SB001")  # default demo
+            device_id = slots.get("device_id") or scenario.get("device_id") or "SB001"
             tool_args = {"device_id": device_id}
             tool_name = "soundbox_health"
             tool_result = await asyncio.to_thread(soundbox_health, device_id)
 
         elif topic == "qr_code_issue":
-            merchant_id = slots.get("merchant_id", "MID001")  # default demo
+            merchant_id = (
+                session.metadata.get("merchant_id")
+                or slots.get("merchant_id")
+                or "MID001"
+            )
             tool_args = {"merchant_id": merchant_id}
             tool_name = "lookup_qr"
             tool_result = await asyncio.to_thread(lookup_qr, merchant_id)
 
         elif topic == "refund_query":
-            txn_id = slots.get("transaction_id", "TXN001")
+            txn_id = slots.get("transaction_id") or scenario.get("transaction_id") or "TXN001"
             amount = float(slots.get("amount", 0) or 0)
             tool_args = {"txn_id": txn_id, "amount": amount}
             tool_name = "trigger_refund"
@@ -1029,40 +1085,110 @@ class AudioHandler:
             return False
 
         latency_ms = round((time.perf_counter() - t0) * 1000)
+        tool_entries = [(tool_name, tool_args, tool_result, latency_ms)]
+        if (
+            tool_name == "lookup_qr"
+            and tool_result.ok
+            and tool_result.data.get("qr_status") == "inactive"
+        ):
+            ticket_started = time.perf_counter()
+            ticket_result = await asyncio.to_thread(
+                raise_ticket,
+                str(tool_args["merchant_id"]),
+                "qr_inactive",
+                "Merchant QR code is inactive and not rendering.",
+            )
+            tool_entries.append(
+                (
+                    "raise_ticket",
+                    {
+                        "merchant_id": tool_args["merchant_id"],
+                        "issue_type": "qr_inactive",
+                        "priority": "normal",
+                    },
+                    ticket_result,
+                    round((time.perf_counter() - ticket_started) * 1000),
+                )
+            )
+        elif tool_name == "trigger_refund" and tool_result.ok:
+            session.metadata["outcome"] = "resolved:refund_initiated"
+        elif tool_result.ok and not session.metadata.get("outcome"):
+            session.metadata["outcome"] = "resolved:info_provided"
 
-        # Audit
         client_id = session.metadata.get("client_id", session.session_id)
-        audit_tool_call(
-            session_id=session.session_id,
-            client_id=client_id,
-            intent=result.label,
-            tool=tool_name,
-            args=tool_args,
-            result=tool_result,
-            latency_ms=latency_ms,
-        )
-
-        # Emit tool_call event for the frontend dashboard.
-        await connection_manager.send_json(
-            session.session_id,
-            {
-                "type": "tool_call",
-                "data": {
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "status": tool_result.status,
-                    "latency_ms": latency_ms,
+        summaries = []
+        call_id = session.metadata.get("call_id")
+        for called_tool, called_args, called_result, called_latency in tool_entries:
+            audit_tool_call(
+                session_id=session.session_id,
+                client_id=client_id,
+                intent=result.label,
+                tool=called_tool,
+                args=called_args,
+                result=called_result,
+                latency_ms=called_latency,
+            )
+            if call_id:
+                record_tool(
+                    call_id,
+                    tool=called_tool,
+                    status=called_result.status,
+                    latency_ms=called_latency,
+                    data=called_result.data,
+                )
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "tool_call",
+                    "data": {
+                        "tool": called_tool,
+                        "args": called_args,
+                        "status": called_result.status,
+                        "latency_ms": called_latency,
+                    },
                 },
-            },
-        )
+            )
+            if called_tool == "raise_ticket" and called_result.ok:
+                session.metadata["ticket_id"] = called_result.data.get("ticket_id")
+                session.metadata["outcome"] = (
+                    "resolved:ticket_raised_priority"
+                    if called_args.get("priority") == "high"
+                    else "resolved:ticket_raised"
+                )
+                await connection_manager.send_json(
+                    session.session_id,
+                    {
+                        "type": "ticket_created",
+                        "ticket_id": called_result.data.get("ticket_id"),
+                    },
+                )
+            summaries.append(
+                spoken_summary_for_language(
+                    called_result,
+                    session.effective_language,
+                    self.manager.llm if settings.GROQ_API_KEY else None,
+                )
+            )
 
-        # Speak the result summary in the merchant's chosen language.
-        summary = spoken_summary_for_language(
-            tool_result,
-            session.effective_language,
-            self.manager.llm if settings.GROQ_API_KEY else None,
+        if (
+            tool_name == "settlement_status"
+            and tool_result.ok
+            and tool_result.data.get("status") == "pending"
+            and scenario.get("scenario_id") == "settlement_pending"
+        ):
+            session.metadata["awaiting_settlement_priority"] = True
+            summaries.append(
+                phrase_text(
+                    "settlement_priority_offer",
+                    session.effective_language or "en-IN",
+                )
+            )
+
+        self._schedule_system_message(
+            session,
+            connection_manager,
+            " ".join(summary for summary in summaries if summary),
         )
-        self._schedule_system_message(session, connection_manager, summary)
         return True
 
 
@@ -1114,6 +1240,8 @@ class AudioHandler:
         session: VoiceSession,
         connection_manager: VoiceConnectionManager,
         clips: list[tuple[str, str]],
+        *,
+        close_call_outcome: str | None = None,
     ) -> None:
         """Speak fixed phrases from the pre-rendered cache.
 
@@ -1150,22 +1278,41 @@ class AudioHandler:
                         controller,
                         self._cached_clip_items(controller, resolved),
                     )
-                    return
-
-                fallback_text = " ".join(
-                    phrase_text(phrase_id, language)
-                    for phrase_id, language in clips
-                ).strip()
-                if fallback_text:
-                    await self._emit_stream(
-                        session,
-                        connection_manager,
-                        controller,
-                        self.manager.speak_only(
-                            fallback_text,
-                            controller=controller,
-                            language=clips[-1][1],
-                        ),
+                else:
+                    fallback_text = " ".join(
+                        phrase_text(phrase_id, language)
+                        for phrase_id, language in clips
+                    ).strip()
+                    if fallback_text:
+                        await self._emit_stream(
+                            session,
+                            connection_manager,
+                            controller,
+                            self.manager.speak_only(
+                                fallback_text,
+                                controller=controller,
+                                language=clips[-1][1],
+                            ),
+                        )
+                if close_call_outcome:
+                    await session.wait_for_playback(controller.response_id)
+                    call_id = session.metadata.get("call_id")
+                    if call_id:
+                        end_call(
+                            call_id,
+                            outcome=close_call_outcome,
+                            language=session.effective_language,
+                            ticket_id=session.metadata.get("ticket_id"),
+                            escalated=session.metadata.get("outcome", "").startswith("escalated:"),
+                            opt_out=session.metadata.get("opt_out_persisted", False),
+                            repeat_complaint_count=session.repeat_complaint_count,
+                        )
+                    await connection_manager.send_json(
+                        session.session_id,
+                        {
+                            "type": "call_closed",
+                            "outcome": close_call_outcome,
+                        },
                     )
             except Exception as exc:
                 await self._send_error(
@@ -1223,10 +1370,62 @@ class AudioHandler:
         if not speak:
             return
         phrase_id = "changed" if changed else "confirm"
+        language_code = session.effective_language or language
+        call_id = session.metadata.get("call_id")
+        if call_id:
+            record_turn(call_id, language=language_code)
+        phrases = [(phrase_id, language_code)]
+        if (
+            not changed
+            and session.metadata.get("scenario", {}).get("scenario_id") == "opt_out"
+        ):
+            phrases.append(("demo_open_opt_out", language_code))
         self._schedule_phrases(
             session,
             connection_manager,
-            [(phrase_id, session.effective_language or language)],
+            phrases,
+        )
+
+    async def _close_opt_out(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        language: str,
+    ) -> None:
+        merchant_id = session.metadata.get("merchant_id")
+        call_id = session.metadata.get("call_id")
+        scenario = session.metadata.get("scenario", {})
+        persisted = False
+        if merchant_id and get_scenario(str(merchant_id)):
+            try:
+                record_opt_out(str(merchant_id), call_id=str(call_id or ""))
+                persisted = True
+            except OSError:
+                _log.exception("Could not save local demo opt-out request")
+                await self._send_error(
+                    session,
+                    connection_manager,
+                    code="opt_out_persistence_failed",
+                    message="The demo could not save the opt-out request. The call will end without confirming suppression.",
+                    recoverable=True,
+                )
+
+        session.escalated = True
+        session.metadata["opted_out"] = True
+        session.metadata["opt_out_persisted"] = persisted
+        session.metadata["outcome"] = "closed:opt_out"
+        phrase_id = (
+            "demo_opt_out_ack"
+            if persisted and scenario.get("scenario_id") == "opt_out"
+            else "opt_out"
+            if persisted
+            else "opt_out_save_failed"
+        )
+        self._schedule_phrases(
+            session,
+            connection_manager,
+            [(phrase_id, language)],
+            close_call_outcome="closed:opt_out",
         )
 
     async def _handle_language_gate(
@@ -1285,13 +1484,14 @@ class AudioHandler:
         if result.action in {"opt_out", "human_request"}:
             await self._stop_active_speech(session, connection_manager)
             language = session.effective_language or "en-IN"
-            self._schedule_phrases(
-                session,
-                connection_manager,
-                [(result.action, language)],
-            )
             if result.action == "opt_out":
-                session.metadata["opted_out"] = True
+                await self._close_opt_out(session, connection_manager, language)
+            else:
+                self._schedule_phrases(
+                    session,
+                    connection_manager,
+                    [(result.action, language)],
+                )
             return True
 
         return False
@@ -1874,6 +2074,52 @@ class AudioHandler:
     ) -> None:
         message_type = message.get("type")
 
+        if message_type == "manual_escalation":
+            call_id = session.metadata.get("call_id")
+            if not call_id:
+                await self._send_error(
+                    session,
+                    connection_manager,
+                    code="escalation_unavailable",
+                    message="Human follow-up is only available for a demo merchant call.",
+                    recoverable=True,
+                )
+                return
+            if not session.language_locked:
+                await self._send_error(
+                    session,
+                    connection_manager,
+                    code="language_required",
+                    message="Choose a call language before requesting human follow-up.",
+                    recoverable=True,
+                )
+                return
+
+            session.escalated = True
+            session.metadata["outcome"] = "escalated:human_requested"
+            end_call(
+                call_id,
+                outcome="escalated:human_requested",
+                language=session.effective_language,
+                escalated=True,
+                repeat_complaint_count=session.repeat_complaint_count,
+            )
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "escalation",
+                    "reason": "operator_requested_follow_up",
+                },
+            )
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "call_closed",
+                    "outcome": "escalated:human_requested",
+                },
+            )
+            return
+
         if message_type == "playback_ack":
             response_id = message.get("response_id")
             segment_id = message.get("segment_id")
@@ -1921,6 +2167,47 @@ class AudioHandler:
                     recoverable=True,
                 )
                 return
+
+            merchant_profile = message.get("merchant_profile")
+            merchant_id = (
+                str(merchant_profile.get("merchant_id") or client_id).strip()
+                if isinstance(merchant_profile, dict)
+                else client_id
+            )
+            scenario = get_scenario(merchant_id)
+            if (
+                scenario
+                and scenario.get("scenario_id") == "opt_out"
+                and is_opted_out(merchant_id)
+            ):
+                await connection_manager.send_json(
+                    session.session_id,
+                    {
+                        "type": "call_blocked",
+                        "message": "This merchant has opted out; promotional demo calls are suppressed.",
+                    },
+                )
+                return
+
+            if isinstance(merchant_profile, dict):
+                session.metadata["merchant_profile"] = merchant_profile
+                merchant_id = str(merchant_profile.get("merchant_id") or client_id).strip()
+                if merchant_id:
+                    session.metadata["merchant_id"] = merchant_id
+                    scenario = get_scenario(merchant_id)
+                    if scenario:
+                        session.metadata["scenario"] = scenario
+                    call = start_call(session.session_id, merchant_id)
+                    if call:
+                        session.metadata["call_id"] = call["call_id"]
+            elif client_id:
+                scenario = get_scenario(client_id)
+                if scenario:
+                    session.metadata["scenario"] = scenario
+                    session.metadata["merchant_id"] = client_id
+                    call = start_call(session.session_id, client_id)
+                    if call:
+                        session.metadata["call_id"] = call["call_id"]
 
             requested_language = (
                 message.get("language")

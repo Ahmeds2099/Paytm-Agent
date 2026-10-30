@@ -20,7 +20,8 @@ export type PipelineStageName =
   | "emotion"
   | "tts"
   | "playback"
-  | "intent";  // Phase 4
+  | "intent"
+  | "tool_action";
 
 export type PipelineStage = {
   responseId?: string;
@@ -117,6 +118,27 @@ export type DemoDocument = {
   format: "PDF" | "CSV" | "JSON";
 };
 
+export type DemoMerchant = {
+  merchant_id: string;
+  name: string;
+  business_name: string;
+  city: string;
+  phone: string;
+  language: string;
+  language_display: string;
+  avatar: string;
+  scenario_id: string;
+  scenario_label: string;
+  member_since: string;
+  total_transactions: number;
+  account_balance: string;
+  open_tickets: number;
+  transaction_id?: string | null;
+  device_id?: string | null;
+  recommended?: boolean;
+  opted_out?: boolean;
+};
+
 export type SystemStatus = {
   app: string;
   version: string;
@@ -130,4 +152,3 @@ export type SystemStatus = {
     mode: "local" | "lite";
   };
 };
-

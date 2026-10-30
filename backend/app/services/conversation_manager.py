@@ -44,6 +44,7 @@ class ConversationManager:
         client_id: str | None = None,
         interruption_context: dict | None = None,
         language: str | None = None,
+        scenario_context: str | None = None,
     ) -> tuple[list[dict], list[dict], dict]:
         query_vector = self.embedder.embed_query(query)
         chunks = QdrantService.search(
@@ -69,6 +70,14 @@ class ConversationManager:
                 {
                     "role": "system",
                     "content": build_voice_prompt(language),
+                }
+            )
+
+        if scenario_context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": scenario_context,
                 }
             )
 
@@ -300,6 +309,7 @@ class ConversationManager:
         client_id: str | None = None,
         interruption_context: dict | None = None,
         language: str | None = None,
+        scenario_context: str | None = None,
     ):
         if controller.response_id is None:
             controller.begin()
@@ -325,6 +335,7 @@ class ConversationManager:
             client_id=client_id,
             interruption_context=interruption_context,
             language=language,
+            scenario_context=scenario_context,
         )
 
         if settings.VIA_ENABLE_TOOLS and looks_like_a_task(query) and not controller.cancelled:

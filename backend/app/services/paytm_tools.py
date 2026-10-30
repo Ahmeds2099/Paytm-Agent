@@ -12,6 +12,7 @@ Import only these public helpers:
     settlement_status(txn_id)
     trigger_refund(txn_id, amount)
     soundbox_health(device_id)
+    raise_ticket(merchant_id, issue_type, description="", priority="normal")
     spoken_summary(result) -> str
     spoken_summary_for_language(result, language, llm=None) -> str
 """
@@ -120,6 +121,31 @@ def soundbox_health(device_id: str) -> ToolResult:
             return ToolResult(tool="soundbox_health", status="not_found",
                               error=f"Device {device_id!r} not found")
         return ToolResult(tool="soundbox_health", status="error", error=str(exc))
+
+
+def raise_ticket(
+    merchant_id: str,
+    issue_type: str,
+    description: str = "",
+    priority: str = "normal",
+) -> ToolResult:
+    """Create a mock support ticket and return its ETA."""
+    try:
+        data = _post(
+            "/ticket",
+            {
+                "merchant_id": merchant_id,
+                "issue_type": issue_type,
+                "description": description,
+                "priority": priority,
+            },
+        )
+        return ToolResult(tool="raise_ticket", status="ok", data=data)
+    except httpx.HTTPStatusError as exc:
+        return ToolResult(tool="raise_ticket", status="error", error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[paytm_tools] raise_ticket failed: %s", exc)
+        return ToolResult(tool="raise_ticket", status="error", error=str(exc))
     except Exception as exc:  # noqa: BLE001
         _log.warning("[paytm_tools] soundbox_health failed: %s", exc)
         return ToolResult(tool="soundbox_health", status="error", error=str(exc))
@@ -195,6 +221,16 @@ def spoken_summary(result: ToolResult) -> str:
                 + "."
             )
         return f"Refund status is {refund_status}."
+
+    if result.tool == "raise_ticket":
+        ticket_id = d.get("ticket_id", "unknown")
+        eta = d.get("eta_hours")
+        if eta is None:
+            return f"Support ticket {ticket_id} has been created."
+        return (
+            f"Support ticket {ticket_id} has been created. "
+            f"Our team expects to respond within {eta} hours."
+        )
 
     if result.tool == "soundbox_health":
         online = d.get("online", False)

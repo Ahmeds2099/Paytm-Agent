@@ -57,6 +57,8 @@ export class VoiceSocket {
     // Phase 4
     onToolCall?: (data: { tool: string; args: Record<string, unknown>; status: string; latency_ms: number }) => void;
     onEscalation?: (reason: string) => void;
+    onCallClosed?: (outcome: string) => void;
+    onCallBlocked?: (message: string) => void;
 
     connect(url: string) {
         if (this.socket) {
@@ -217,6 +219,12 @@ export class VoiceSocket {
                     // Phase 4: escalation event
                     this.onEscalation?.(String(message.reason ?? "unknown"));
                     break;
+                case "call_closed":
+                    this.onCallClosed?.(String(message.outcome ?? "closed"));
+                    break;
+                case "call_blocked":
+                    this.onCallBlocked?.(String(message.message ?? "This demo call is not available."));
+                    break;
                 case "error":
                     this.onVoiceError?.({
                         code: message.code ?? "voice_error",
@@ -279,12 +287,29 @@ export class VoiceSocket {
         });
     }
 
-    initializeSession(clientId: string, documentIds: string[]) {
-        this.sendJSON({
+    initializeSession(
+        clientId: string,
+        documentIds: string[],
+        merchantProfile?: Record<string, unknown>,
+    ) {
+        const payload: Record<string, unknown> = {
             type: "session_init",
             client_id: clientId,
-            document_ids: documentIds,
-        });
+        };
+
+        if (documentIds.length > 0 || !merchantProfile) {
+            payload.document_ids = documentIds;
+        }
+
+        if (merchantProfile) {
+            payload.merchant_profile = merchantProfile;
+        }
+
+        this.sendJSON(payload);
+    }
+
+    requestEscalation() {
+        this.sendJSON({ type: "manual_escalation" });
     }
 
     setDocumentContext(documentIds: string[]) {
