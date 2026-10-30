@@ -54,6 +54,9 @@ export class VoiceSocket {
 
     onTurnMetrics?: (metrics: TurnMetrics) => void;
     onDocumentContextUpdated?: (documentIds: string[]) => void;
+    // Phase 4
+    onToolCall?: (data: { tool: string; args: Record<string, unknown>; status: string; latency_ms: number }) => void;
+    onEscalation?: (reason: string) => void;
 
     connect(url: string) {
         if (this.socket) {
@@ -200,6 +203,19 @@ export class VoiceSocket {
                     this.onDocumentContextUpdated?.(
                         Array.isArray(message.document_ids) ? message.document_ids : [],
                     );
+                    break;
+                case "tool_call":
+                    // Phase 4: Paytm tool call result
+                    this.onToolCall?.({
+                        tool: message.data?.tool ?? "",
+                        args: message.data?.args ?? {},
+                        status: message.data?.status ?? "error",
+                        latency_ms: message.data?.latency_ms ?? 0,
+                    });
+                    break;
+                case "escalation":
+                    // Phase 4: escalation event
+                    this.onEscalation?.(String(message.reason ?? "unknown"));
                     break;
                 case "error":
                     this.onVoiceError?.({

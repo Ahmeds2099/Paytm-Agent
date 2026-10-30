@@ -4,7 +4,7 @@ import { FormEvent, useMemo, useRef, useState } from "react";
 import ArchitectureDashboard from "@/components/dashboard/architecturedashboard";
 import VoiceOrb from "@/components/voice/voiceorb";
 import { useVoice } from "@/hooks/usevoice";
-import type { ConversationTurn, DemoDocument, Provenance } from "@/lib/voice/types";
+import type { ConversationTurn, DemoDocument, Provenance, ToolCall } from "@/lib/voice/types";
 
 const provenanceLabel = (value?: Provenance) => {
   if (value === "document") return "Domain knowledge";
@@ -300,6 +300,18 @@ export default function HomePage() {
                   <div><span className="status-dot" data-status={voice.callLanguage.locked ? "ready" : "degraded"} /><span>Language</span><strong>{voice.callLanguage.display}</strong></div>
                   <div><span className="status-dot" data-status={voice.sttProvider === "deepgram" ? "ready" : "degraded"} /><span>Transcription</span><strong>{voice.sttProvider}</strong></div>
                   <div><span className="status-dot" data-status={voice.activeDocument ? "ready" : "idle"} /><span>Knowledge</span><strong>{voice.activeDocument ? voice.activeDocument.domain_profile.domain : "General"}</strong></div>
+                  {voice.toolCallLog.length > 0 && (
+                    <div style={{ gridColumn: "1/-1", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "0.5rem", marginTop: "0.25rem" }}>
+                      <span style={{ opacity: 0.6, fontSize: "0.75rem" }}>Recent tool calls</span>
+                      {voice.toolCallLog.slice(0, 3).map((call: ToolCall, i: number) => (
+                        <div key={i} style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.25rem", fontSize: "0.8rem" }}>
+                          <span className={`status-dot`} data-status={call.status === "ok" ? "ready" : "degraded"} />
+                          <span>{call.tool}</span>
+                          <span style={{ opacity: 0.6 }}>{call.latency_ms}ms</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -330,6 +342,17 @@ export default function HomePage() {
             <section className="fallback-banner" aria-labelledby="fallback-title">
               <div><p className="section-label">Transcription fallback</p><h2 id="fallback-title">Continue with the lower-accuracy local model?</h2><p>{voice.fallbackMessage}</p></div>
               <div><button className="primary-action compact" onClick={() => voice.chooseWhisperFallback("continue")}>Continue with Whisper</button><button className="quiet-action" onClick={() => voice.chooseWhisperFallback("stop")}>Stop and check</button></div>
+            </section>
+          )}
+
+          {voice.escalation && (
+            <section className="fallback-banner" aria-labelledby="escalation-title" style={{ borderColor: "rgba(255,180,0,0.4)", background: "rgba(255,180,0,0.06)" }}>
+              <div>
+                <p className="section-label">Human handoff</p>
+                <h2 id="escalation-title">Connecting to human support</h2>
+                <p>{voice.escalation.reason === "merchant_requested_human" ? "The merchant has requested a human colleague." : "Escalating after repeated complaint — connecting to support."}</p>
+              </div>
+              <div><button className="quiet-action" onClick={voice.dismissEscalation} aria-label="Dismiss escalation">Dismiss</button></div>
             </section>
           )}
         </div>

@@ -19,7 +19,8 @@ export type PipelineStageName =
   | "llm"
   | "emotion"
   | "tts"
-  | "playback";
+  | "playback"
+  | "intent";  // Phase 4
 
 export type PipelineStage = {
   responseId?: string;
@@ -30,6 +31,22 @@ export type PipelineStage = {
   clientElapsedMs?: number;
   updatedAt: number;
 };
+
+// Phase 4: tool call record from the backend
+export type ToolCall = {
+  tool: string;
+  args: Record<string, unknown>;
+  status: "ok" | "not_found" | "error";
+  latency_ms: number;
+  ts: number;
+};
+
+// Phase 4: escalation event from the backend
+export type EscalationEvent = {
+  reason: string;
+  ts: number;
+};
+
 
 export type SourceReference = {
   filename?: string;

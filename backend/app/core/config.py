@@ -182,6 +182,24 @@ class Settings:
         "true",
     ).strip().lower() in {"1", "true", "yes", "on"}
 
+    # Phase 4: mock Paytm API server.
+    MOCK_PAYTM_URL: str = os.getenv(
+        "MOCK_PAYTM_URL",
+        "http://127.0.0.1:8200",
+    ).strip()
+
+    # Phase 4: audit log location. Empty = default .audit/calls.jsonl in backend/.
+    AUDIT_LOG_PATH: str = os.getenv(
+        "AUDIT_LOG_PATH",
+        "",
+    ).strip()
+
+    # Phase 4: enable Paytm tool dispatch on the voice path.
+    VOICE_ENABLE_TOOLS: bool = os.getenv(
+        "VOICE_ENABLE_TOOLS",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
 
     DEEPGRAM_API_KEY: str = os.getenv(
         "DEEPGRAM_API_KEY",

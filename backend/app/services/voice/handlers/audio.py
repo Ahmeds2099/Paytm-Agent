@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 
 from app.core.config import settings
 from app.services.conversation.response_controller import ResponseController
@@ -32,6 +33,16 @@ from app.services.voice.resume_intent import (
 from app.services.voice.session import VoiceSession
 from app.services.voice.stt_pipeline import VoiceSTTPipeline
 from app.services.voice.vad import SpeechSegment, SpeechStart
+# Phase 4: intent dispatch, tools, audit
+from app.services.intent import classify, extract_slots
+from app.services.paytm_tools import (
+    lookup_qr,
+    settlement_status,
+    trigger_refund,
+    soundbox_health,
+    spoken_summary,
+)
+from app.services.audit_log import audit_tool_call
 
 
 DECLINE_ACK_TEXT = (
@@ -864,6 +875,179 @@ class AudioHandler:
         )
         session.set_voice_task(task, controller)
 
+    # ------------------------------------------------------------------
+    # Phase 4: intent classification + tool dispatch
+    # ------------------------------------------------------------------
+
+    async def _dispatch_intent(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        transcript: str,
+    ) -> bool:
+        """Classify transcript intent and dispatch a Paytm tool if applicable.
+
+        Returns True  -> turn handled here, caller must NOT call _schedule_response.
+        Returns False -> fall through to the LLM reply path.
+
+        Guards:
+        - Only fires after language lock (guaranteed by caller).
+        - Never fires while session.escalated is True.
+        - Disabled via VOICE_ENABLE_TOOLS=false.
+        """
+        if not settings.VOICE_ENABLE_TOOLS or session.escalated:
+            return False
+
+        llm = self.manager.llm if settings.GROQ_API_KEY else None
+        t0 = time.perf_counter()
+
+        result = await asyncio.to_thread(
+            classify,
+            transcript,
+            session.effective_language,
+            llm,
+        )
+        session.last_intent = result.label
+
+        # Emit intent as a pipeline stage event for the dashboard.
+        await connection_manager.send_json(
+            session.session_id,
+            {
+                "type": "pipeline_stage",
+                "data": {
+                    "stage": "intent",
+                    "status": result.label,
+                    "topic": result.topic,
+                    "confidence": round(result.confidence, 2),
+                    "source": result.source,
+                },
+            },
+        )
+
+        # --- Escalation-triggering intents ---
+        if result.label == "opt_out":
+            session.escalated = True
+            lang = session.effective_language or "en-IN"
+            self._schedule_phrases(
+                session,
+                connection_manager,
+                [("opt_out", lang)],
+            )
+            return True
+
+        if result.label == "human_request":
+            session.escalated = True
+            lang = session.effective_language or "en-IN"
+            self._schedule_phrases(
+                session,
+                connection_manager,
+                [("human_request", lang)],
+            )
+            await connection_manager.send_json(
+                session.session_id,
+                {
+                    "type": "escalation",
+                    "reason": "merchant_requested_human",
+                },
+            )
+            return True
+
+        if result.label == "repeat_complaint":
+            session.repeat_complaint_count += 1
+            if session.repeat_complaint_count >= 2:
+                session.escalated = True
+                lang = session.effective_language or "en-IN"
+                self._schedule_phrases(
+                    session,
+                    connection_manager,
+                    [("human_request", lang)],
+                )
+                await connection_manager.send_json(
+                    session.session_id,
+                    {
+                        "type": "escalation",
+                        "reason": "repeated_complaint",
+                    },
+                )
+                return True
+            # First repeat_complaint: fall through to LLM for empathy reply
+            return False
+        else:
+            session.repeat_complaint_count = 0
+
+        # --- Tool-dispatch map ---
+        # Only fire tools when language is locked and we have the mock URL.
+        slots = result.slots or {}
+        topic = result.topic
+
+        tool_result = None
+        tool_args: dict = {}
+        tool_name = ""
+
+        if result.label == "settlement_query":
+            txn_id = slots.get("transaction_id", "TXN002")  # default demo
+            tool_args = {"txn_id": txn_id}
+            tool_name = "settlement_status"
+            tool_result = await asyncio.to_thread(settlement_status, txn_id)
+
+        elif result.label == "device_issue" or topic == "soundbox_issue":
+            device_id = slots.get("device_id", "SB001")  # default demo
+            tool_args = {"device_id": device_id}
+            tool_name = "soundbox_health"
+            tool_result = await asyncio.to_thread(soundbox_health, device_id)
+
+        elif topic == "qr_code_issue":
+            merchant_id = slots.get("merchant_id", "MID001")  # default demo
+            tool_args = {"merchant_id": merchant_id}
+            tool_name = "lookup_qr"
+            tool_result = await asyncio.to_thread(lookup_qr, merchant_id)
+
+        elif topic == "refund_query":
+            txn_id = slots.get("transaction_id", "TXN001")
+            amount = float(slots.get("amount", 0) or 0)
+            tool_args = {"txn_id": txn_id, "amount": amount}
+            tool_name = "trigger_refund"
+            tool_result = await asyncio.to_thread(trigger_refund, txn_id, amount)
+
+        if tool_result is None:
+            # No tool matched — let the LLM answer.
+            return False
+
+        latency_ms = round((time.perf_counter() - t0) * 1000)
+
+        # Audit
+        client_id = session.metadata.get("client_id", session.session_id)
+        audit_tool_call(
+            session_id=session.session_id,
+            client_id=client_id,
+            intent=result.label,
+            tool=tool_name,
+            args=tool_args,
+            result=tool_result,
+            latency_ms=latency_ms,
+        )
+
+        # Emit tool_call event for the frontend dashboard.
+        await connection_manager.send_json(
+            session.session_id,
+            {
+                "type": "tool_call",
+                "data": {
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "status": tool_result.status,
+                    "latency_ms": latency_ms,
+                },
+            },
+        )
+
+        # Speak the result summary.
+        summary = spoken_summary(tool_result)
+        self._schedule_system_message(session, connection_manager, summary)
+        return True
+
+
+
     @staticmethod
     def _cached_clip_items(controller, clips):
         """Turn cached PCM clips into the same item stream live TTS produces."""
@@ -1405,11 +1589,18 @@ class AudioHandler:
 
             await self._stop_active_speech(session, connection_manager)
 
-            self._schedule_response(
+            # Phase 4: classify intent and dispatch tool (or fall through to LLM).
+            dispatched = await self._dispatch_intent(
                 session,
                 connection_manager,
                 transcript,
             )
+            if not dispatched:
+                self._schedule_response(
+                    session,
+                    connection_manager,
+                    transcript,
+                )
 
     def _begin_emotion_analysis(
         self,

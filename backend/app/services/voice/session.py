@@ -57,6 +57,16 @@ class VoiceSession:
     # How many unclear answers the gate has seen. Two tries, then default.
     language_attempts: int = 0
 
+    # Phase 4: set to True when the merchant requests a human or triggers
+    # auto-escalation. While True, no more tool calls are dispatched.
+    escalated: bool = False
+
+    # Phase 4: count consecutive repeat_complaint intents for auto-escalation.
+    repeat_complaint_count: int = 0
+
+    # Phase 4: last classified intent (for dashboard and audit).
+    last_intent: str | None = None
+
     whisper_pipeline: Any = None
 
     fallback_load_task: asyncio.Task | None = None

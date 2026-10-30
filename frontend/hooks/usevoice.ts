@@ -11,8 +11,10 @@ import {
 import type {
     ConversationTurn,
     DemoDocument,
+    EscalationEvent,
     PipelineStage,
     SystemStatus,
+    ToolCall,
     TurnContext,
     TurnMetrics,
     UploadedDocument,
@@ -131,6 +133,9 @@ export function useVoice() {
     const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
     const [systemError, setSystemError] = useState("");
     const [demoDocuments, setDemoDocuments] = useState<DemoDocument[]>([]);
+    // Phase 4
+    const [toolCallLog, setToolCallLog] = useState<ToolCall[]>([]);
+    const [escalation, setEscalation] = useState<EscalationEvent | null>(null);
 
     const apiBase = useMemo(() => resolveApiUrl().replace(/\/$/, ""), []);
 
@@ -555,6 +560,23 @@ export function useVoice() {
             setCallLanguage({ code: language, display, locked });
         };
 
+        // Phase 4: tool call log
+        socket.onToolCall = (data: { tool: string; args: Record<string, unknown>; status: string; latency_ms: number }) => {
+            const entry: ToolCall = { ...data, status: data.status as ToolCall["status"], ts: Date.now() };
+            setToolCallLog((log) => [entry, ...log].slice(0, 10));
+            setPipelineStages((stages) => mergePipelineStage(stages, {
+                stage: "intent" as any,
+                status: `tool:${data.tool} (${data.status})`,
+                durationMs: data.latency_ms,
+                updatedAt: Date.now(),
+            }));
+        };
+
+        // Phase 4: escalation
+        socket.onEscalation = (reason: string) => {
+            setEscalation({ reason, ts: Date.now() });
+        };
+
         setSTTProvider("initializing");
 
         const wsBase = apiBase.replace(/^http/, "ws");
@@ -778,5 +800,8 @@ export function useVoice() {
         dismissUploadError,
         checkSystem,
         updateSystemSettings,
+        toolCallLog,
+        escalation,
+        dismissEscalation: () => setEscalation(null),
     };
 }
