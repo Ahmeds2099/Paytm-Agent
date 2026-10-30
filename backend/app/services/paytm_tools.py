@@ -13,6 +13,7 @@ Import only these public helpers:
     trigger_refund(txn_id, amount)
     soundbox_health(device_id)
     spoken_summary(result) -> str
+    spoken_summary_for_language(result, language, llm=None) -> str
 """
 from __future__ import annotations
 
@@ -209,3 +210,57 @@ def spoken_summary(result: ToolResult) -> str:
         return msg
 
     return "I've retrieved the information. Would you like to know more?"
+
+
+# ---------------------------------------------------------------------------
+# Language-aware summary (translate via Groq when not English)
+# ---------------------------------------------------------------------------
+
+_LANG_NAMES = {
+    "hi-IN": "Hindi",
+    "kn-IN": "Kannada",
+    "en-IN": "English",
+}
+
+_TRANSLATE_SYSTEM = (
+    "You are a voice assistant translator for a Paytm merchant call. "
+    "Translate the English sentence given by the user into {lang_name}. "
+    'Return JSON only: {{"translation": "<translated sentence>"}}. '
+    "Keep it natural, spoken, and short. No explanations."
+)
+
+
+def spoken_summary_for_language(
+    result: ToolResult,
+    language: str | None,
+    llm=None,
+) -> str:
+    """Return the tool result summary in the merchant's chosen language.
+
+    - English (en-IN) or no language: returns plain English summary.
+    - Hindi (hi-IN) or Kannada (kn-IN): translates via Groq if llm is provided.
+    - Falls back to English silently if translation fails or llm is None.
+    """
+    english = spoken_summary(result)
+
+    if not language or language == "en-IN":
+        return english
+
+    lang_name = _LANG_NAMES.get(language, "English")
+    if lang_name == "English" or llm is None:
+        return english
+
+    try:
+        payload = llm.complete_json(
+            system=_TRANSLATE_SYSTEM.format(lang_name=lang_name),
+            user=english,
+            max_tokens=150,
+        )
+        if isinstance(payload, dict):
+            translated = str(payload.get("translation") or "").strip()
+            if len(translated) > 2:
+                return translated
+    except Exception:
+        _log.warning("[paytm_tools] translation to %s failed, using English", language)
+
+    return english

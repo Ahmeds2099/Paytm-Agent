@@ -183,6 +183,41 @@ class SpokenSummaryTests(unittest.TestCase):
         text = spoken_summary(result)
         self.assertIn("couldn't find", text.lower())
 
+    def test_english_passthrough_no_translation(self):
+        """en-IN should return the English summary without any LLM call."""
+        from app.services.paytm_tools import spoken_summary_for_language, ToolResult
+        result = ToolResult(tool="soundbox_health", status="ok", data={"online": True})
+        mock_llm = MagicMock()
+        text = spoken_summary_for_language(result, "en-IN", mock_llm)
+        mock_llm.complete_json.assert_not_called()
+        self.assertIn("online", text.lower())
+
+    def test_no_llm_falls_back_to_english(self):
+        """Without llm, Hindi request must still return English text."""
+        from app.services.paytm_tools import spoken_summary_for_language, ToolResult
+        result = ToolResult(tool="soundbox_health", status="ok", data={"online": True})
+        text = spoken_summary_for_language(result, "hi-IN", llm=None)
+        self.assertIn("online", text.lower())
+
+    def test_hindi_translation_called_with_llm(self):
+        """With llm provided, Hindi request must call complete_json for translation."""
+        from app.services.paytm_tools import spoken_summary_for_language, ToolResult
+        result = ToolResult(tool="soundbox_health", status="ok", data={"online": True})
+        mock_llm = MagicMock()
+        mock_llm.complete_json.return_value = {"translation": "आपका साउंडबॉक्स ऑनलाइन है।"}
+        text = spoken_summary_for_language(result, "hi-IN", mock_llm)
+        mock_llm.complete_json.assert_called_once()
+        self.assertEqual(text, "आपका साउंडबॉक्स ऑनलाइन है।")
+
+    def test_translation_failure_returns_english(self):
+        """If complete_json raises, must fall back to English silently."""
+        from app.services.paytm_tools import spoken_summary_for_language, ToolResult
+        result = ToolResult(tool="soundbox_health", status="ok", data={"online": True})
+        mock_llm = MagicMock()
+        mock_llm.complete_json.side_effect = RuntimeError("network error")
+        text = spoken_summary_for_language(result, "hi-IN", mock_llm)
+        self.assertIn("online", text.lower())
+
 
 # ---------------------------------------------------------------------------
 # Audit log tests

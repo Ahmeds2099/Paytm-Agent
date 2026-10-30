@@ -146,9 +146,14 @@ class LanguageChangeTests(unittest.TestCase):
 
 class PhraseTableTests(unittest.TestCase):
     def test_greeting_exists_in_english_only(self):
-        # Owner decision 2026-10-30: single English greeting.
+        # Owner decision 2026-10-30: single English greeting with Paytm welcome.
         self.assertEqual(set(PHRASES["greeting"]), {"en-IN"})
         self.assertEqual(GREETING_ORDER, ("en-IN",))
+
+    def test_greeting_has_paytm_welcome(self):
+        # Owner decision (updated): greeting must open with a welcome line.
+        text = PHRASES["greeting"]["en-IN"]
+        self.assertIn("Paytm", text)
 
     def test_greeting_offers_all_three_language_names(self):
         # The English greeting must mention all three language options.

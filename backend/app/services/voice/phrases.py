@@ -15,10 +15,9 @@ from __future__ import annotations
 # Phrase id -> language -> text.
 PHRASES: dict[str, dict[str, str]] = {
     "greeting": {
-        # Owner decision 2026-10-30: single English line only.
-        # The recording notice is intentionally dropped (owner's explicit choice).
+        # Owner decision 2026-10-30: single English line, with Paytm welcome prefix.
         # Retry stays trilingual so non-English speakers still get a second chance.
-        "en-IN": "Would you be comfortable in English, Hindi or Kannada?",
+        "en-IN": "Hello and welcome to Paytm. Would you be comfortable in English, Hindi or Kannada?",
     },
     "confirm": {
         "hi-IN": (

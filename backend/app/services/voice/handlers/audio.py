@@ -40,7 +40,7 @@ from app.services.paytm_tools import (
     settlement_status,
     trigger_refund,
     soundbox_health,
-    spoken_summary,
+    spoken_summary_for_language,
 )
 from app.services.audit_log import audit_tool_call
 
@@ -49,11 +49,26 @@ DECLINE_ACK_TEXT = (
     "Okay."
 )
 
-RESUME_PREFIX = "Returning to that thought - "
+# Language-aware resume prefixes — spoken in the merchant's chosen language.
+_RESUME_PREFIX: dict[str, str] = {
+    "hi-IN": "उस विषय पर वापस आते हैं — ",
+    "kn-IN": "ಆ ವಿಷಯಕ್ಕೆ ಹಿಂತಿರುಗೋಣ — ",
+    "en-IN": "Returning to that thought — ",
+}
+_FALSE_RESUME_PREFIX: dict[str, str] = {
+    "hi-IN": "मैं समझा नहीं, इसलिए जारी रखता हूँ। ",
+    "kn-IN": "ನನಗೆ ಅರ್ಥ ಆಗಲಿಲ್ಲ, ಮುಂದುವರಿಯುತ್ತೇನೆ. ",
+    "en-IN": "I didn't catch that, so I'll continue. ",
+}
 
-FALSE_INTERRUPTION_RESUME_PREFIX = (
-    "I didn't catch that, so I'll continue. "
-)
+
+def _resume_prefix(language: str | None) -> str:
+    return _RESUME_PREFIX.get(language or "en-IN", _RESUME_PREFIX["en-IN"])
+
+
+def _false_resume_prefix(language: str | None) -> str:
+    return _FALSE_RESUME_PREFIX.get(language or "en-IN", _FALSE_RESUME_PREFIX["en-IN"])
+
 
 FALLBACK_WARNING_TEXT = (
     "I'm having trouble with my primary transcription service. "
@@ -1041,8 +1056,12 @@ class AudioHandler:
             },
         )
 
-        # Speak the result summary.
-        summary = spoken_summary(tool_result)
+        # Speak the result summary in the merchant's chosen language.
+        summary = spoken_summary_for_language(
+            tool_result,
+            session.effective_language,
+            self.manager.llm if settings.GROQ_API_KEY else None,
+        )
         self._schedule_system_message(session, connection_manager, summary)
         return True
 
@@ -1281,8 +1300,11 @@ class AudioHandler:
         self,
         session: VoiceSession,
         connection_manager: VoiceConnectionManager,
-        prefix: str = RESUME_PREFIX,
+        prefix: str | None = None,
     ) -> None:
+        # Default prefix is language-aware
+        if prefix is None:
+            prefix = _resume_prefix(session.effective_language)
         controller = self._new_controller()
 
         async def runner() -> None:
@@ -1389,9 +1411,7 @@ class AudioHandler:
                         self._schedule_resume(
                             session,
                             connection_manager,
-                            prefix=(
-                                FALSE_INTERRUPTION_RESUME_PREFIX
-                            ),
+                            prefix=_false_resume_prefix(session.effective_language),
                         )
             except asyncio.CancelledError:
                 return
