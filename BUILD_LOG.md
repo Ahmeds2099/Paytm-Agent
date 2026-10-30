@@ -571,3 +571,245 @@ opened with a numbered troubleshooting list is gone.
   the numbered-list read-aloud back.
 - Groq latency varies by queue; if the first audio of a call needs to be more
   predictable, pre-warming the model at startup is the next lever.
+
+---
+
+## 2026-10-30 - Handoff: where the build stands, evidence, and what comes next
+
+This section is written so another agent can resume without reading the whole
+log. Read this section, then the Phase 2 section above.
+
+### One-line status
+
+Phases 0, 1 and 2 are complete, live-verified and committed. Phase 3 has not
+started. Nothing is half-edited: the working tree was clean at the Phase 2
+commit.
+
+| Item | Value |
+| --- | --- |
+| Working repo | `G:\Coding\Projects\paytm-voice-teammate` |
+| Read-only original | `G:\Coding\Projects\Paytm Hackathon` (never modify) |
+| Branch | `master`, no remote, never push |
+| Last commit | `6b00ed0 phase 2: retune for merchant telecalling` |
+| Backend | FastAPI, `127.0.0.1:8100` |
+| Frontend | Vite, `http://localhost:3100` |
+| Redis prefix | `paytm:` |
+| Qdrant collections | `paytm_memory`, `paytm_policy` |
+| Tests | 97 passing |
+
+### How to run everything
+
+Backend, from the repo:
+
+```
+cd backend
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8100 --log-level warning
+```
+
+Frontend, from the repo:
+
+```
+cd frontend
+npm run dev
+```
+
+Secrets live only in `backend/.env`, which is git-ignored. `.env.example`
+documents every key with empty values. Never print or commit a key.
+
+Health check:
+
+```
+curl http://127.0.0.1:8100/system/status
+```
+
+Expected: `status=running`, `emotion_enabled=false`, `stt=sarvam/saaras:v3-realtime`,
+`tts=sonic-3.6`, `default_language=auto`. Persistence reports `degraded` because
+the hosted Redis and Qdrant are unreachable from this machine; the in-process
+fallback keeps voice working and this is not a build defect.
+
+Verification commands, all owner-runnable:
+
+```
+cd backend
+.venv\Scripts\python.exe -m unittest discover -s tests
+.venv\Scripts\python.exe scripts\voice_latency_probe.py en-IN
+.venv\Scripts\python.exe scripts\voice_turn_probe.py hi-IN
+.venv\Scripts\python.exe scripts\voice_turn_probe.py kn-IN
+.venv\Scripts\python.exe scripts\voice_turn_probe.py en-IN
+.venv\Scripts\python.exe scripts\intent_eval.py
+.venv\Scripts\python.exe scripts\intent_eval.py --language hi-IN
+```
+
+`intent_eval.py` spends Groq credits: one classification call per example the
+rule fast path does not catch. It has not been run yet.
+
+### What is done, with evidence
+
+| Phase | Commit | Evidence |
+| --- | --- | --- |
+| 0 clone and isolate | `21c0264`, `2fea99a`, `c6c5529` | fingerprint identical (135 files), ports and prefixes isolated, Nova-3 `keyterm` fixed |
+| 1 Sarvam STT, hi/kn/en, TTS | `b097fe3`, `45cdcc9` | 56 tests, live hi/kn/en/auto smoke pass, Sarvam listed as active provider |
+| 2 telecalling retune | `6b00ed0` | 97 tests, live hi/kn/en turns, emotion absent from the log, latency measured |
+
+Phase 2 detail that matters later:
+
+- `backend/app/core/prompts.py` holds the whole voice persona and
+  `build_voice_prompt(language)`. This is the single editable prompt file the
+  brief asks for.
+- `backend/app/services/voice/response_guard.py` enforces short speech in
+  code, so a prompt regression cannot make the agent read a list aloud. Budget:
+  aim for three sentences, a fourth only if it is a question, hard cap five,
+  otherwise close with a localized "would you like to know more?".
+- `backend/app/services/intent.py` classifies a turn. Rules run first for
+  `opt_out`, `human_request`, `callback_request`, `language_choice`,
+  `confirmation_yes` and `confirmation_no` in all three languages. Everything
+  else asks the model for JSON.
+- `backend/app/services/llm.py` uses one model, `openai/gpt-oss-120b`, for
+  replies and classification, with a 12 s timeout, one retry and
+  `reasoning_effort=low`. The effort setting is not cosmetic: hidden reasoning
+  tokens count against `max_tokens`, and without it replies came back empty or
+  cut in half.
+- Two probes were promoted from temporary scripts into the repo at
+  `backend/scripts/voice_latency_probe.py` and
+  `backend/scripts/voice_turn_probe.py`, so the numbers below can be
+  reproduced by the next agent.
+
+Warm English turn, measured with the probe:
+
+| Measurement | Phase 1 | Phase 2 |
+| --- | --- | --- |
+| Final transcript | +1.31 s | +1.28 to +2.34 s |
+| First token | +2.02 s | +1.55 to +6.27 s |
+| First audio | +2.32 s | +1.86 to +6.86 s |
+| Turn complete | 10.89 s | 2.95 to 7.98 s |
+
+The spread is Groq queue time on the same warm backend, not pipeline work. The
+first turn after a restart is consistently slower (about 7 s to first token).
+
+### Decisions taken against the brief
+
+These were owner instructions or necessary judgement calls. They are recorded
+so nobody silently reverts them, and so Phase 4 knows where it stands.
+
+1. **Emotion analysis is parked, not deleted.** The brief says remove it
+   outright. The owner asked to keep it re-enablable. `VOICE_ENABLE_EMOTION`
+   is `false` in `.env.example` and in `backend/.env`. While false, no model is
+   loaded, nothing waits on it and the clarification prompt is not used.
+   Caveat: `backend/app/services/emotion/provider.py` still does
+   `from funasr import AutoModel` at import time, so the module is imported
+   (cheap) but the model is never constructed. If Phase 4 wants the brief's
+   "no dead code" reading literally, delete the module and the flag then.
+2. **Reply length is three, four if a question, five max.** The brief says one
+   or two. The owner asked for a little more room. Enforced in
+   `VoiceReplyGuard`.
+3. **The intent taxonomy does not match brief section 5.3.** This is the
+   biggest thing to reconcile before Phase 4. Built labels:
+
+   | Brief label | Built? | Built equivalent |
+   | --- | --- | --- |
+   | language_choice | yes | same |
+   | settlement_query | yes | same |
+   | device_issue | yes | same |
+   | ticket_request | **no** | not modelled |
+   | loan_interest | yes | same |
+   | device_offer_interest | **no** | not modelled |
+   | policy_question | **no** | not modelled |
+   | callback_request | yes | same |
+   | human_request | yes | same |
+   | repeat_complaint | **no** | not modelled |
+   | objection | yes | same |
+   | opt_out | yes | same |
+   | confirmation_yes / confirmation_no | yes | same |
+   | smalltalk | **no** | folded into `other` |
+   | out_of_scope | **no** | folded into `other` |
+
+   Built labels with no brief counterpart: `transaction_issue`,
+   `qr_code_issue`, `refund_query`, `soundbox_issue`, `charges_query`,
+   `onboarding_kyc`. They were added because they are the questions merchants
+   actually ask on a Paytm call, but Phase 4 escalation rules in the brief key
+   off the brief's labels. Recommendation: extend the taxonomy at the start of
+   Phase 4, keep the existing labels as sub-labels or aliases, and update
+   `backend/tests/data/intent_examples.py` plus `INTENTS` together.
+4. **Language is still `auto`.** Phase 3 owns ask-and-lock. Until then, `auto`
+   can still follow the merchant from Kannada into English. The Phase 2 prompt
+   forbids switching in words, but the session language is not locked.
+5. **No trilingual greeting and no recording notice yet.** The brief puts both
+   in the Phase 3 greeting. Nothing in the current greeting contradicts it, and
+   there is no user-visible "Via" text.
+
+### What comes next, in the brief's order
+
+**Phase 3 - language selection at the start of every call.** Not started.
+Checklist from brief section 6:
+
+- [ ] Greeting: one short line in Hindi, Kannada and English that introduces
+      the assistant, says the call may be recorded, and asks which language the
+      merchant is comfortable in.
+- [ ] Classifier returns `language_choice` with a value in `{hi, kn, en}` for
+      the language name in any of the three scripts and for common spellings.
+      A single-word answer must work. The rule fast path in
+      `backend/app/services/intent.py` already extracts all of this; Phase 3
+      needs to consume `slots["language"]` and act on it.
+- [ ] Confirm once in the chosen language ("Okay, we will continue in
+      Kannada"), then persist `session.language`.
+- [ ] Use the locked language for speech to text, the system prompt and the TTS
+      language field for the rest of the call. The three inputs already exist:
+      `session.effective_language`, `build_voice_prompt(language)` and the
+      Cartesia `language=` argument.
+- [ ] Unclear answer: ask once more, slowly and simply. If still unclear,
+      default to English and offer a human.
+- [ ] Change of mind: if the merchant explicitly names another language later,
+      update the language. Never switch on its own. Explicit requests already
+      classify as `language_choice`, so this is a wiring job, not a new model.
+- [ ] Pre-generate the greeting and fixed phrases once per language and cache
+      them as audio files, per brief section 9. Nothing is cached yet; every
+      turn currently synthesizes fresh audio.
+- [ ] Acceptance: all three languages end to end, the unclear path works, and
+      the language never changes by itself.
+
+Likely files: `backend/app/services/voice/session.py` (a `language_locked`
+flag), `backend/app/services/voice/handlers/audio.py` (greeting, gate,
+`language_changed`), `backend/app/services/voice/language.py` (accept
+single-word and cross-script language names), `backend/app/core/prompts.py`
+(trilingual greeting + confirmation line), a new
+`backend/app/services/voice/prerender.py` for the audio cache, and the frontend
+language control so the demo can also select manually.
+
+**Phase 4 - Paytm agent.** Not started. From the brief: conversation states,
+delegation protocol with a sub agent, a separate `mock_paytm/` FastAPI service
+on port 8200 with seeded data, tool functions with idempotency and audit
+entries, escalation rules, session memory, and a dashboard. The sub agent is
+`openai/gpt-oss-120b` with tool calling, at most three steps, eight second
+total budget, four second per-function timeout and one retry.
+
+**Phase 5 - hackathon-day readiness.** Not started. See brief section 8 and
+section 9 on credit protection and demo reliability.
+
+### Pending owner actions
+
+- [ ] Browser check on `http://localhost:3100`: microphone in Hindi, Kannada
+      and English, plus barge-in.
+- [ ] Run `scripts/intent_eval.py` for live intent accuracy. It spends Groq
+      credits, which is why it was left to the owner.
+- [ ] Confirm whether the Phase 4 taxonomy should be reconciled to the brief's
+      label list, or whether the built list stays.
+
+### Gotchas for the next agent
+
+- Windows PowerShell mangles non-ASCII on `Add-Content` and in the console.
+  Write Unicode files with Python or the editor tool, and check with
+  `repr()`/`Select-String` rather than trusting console output.
+- `backend/.env` is the only place secrets exist. Changing settings means
+  editing keys there; `.env.example` only documents names.
+- Qdrant and Redis are unreachable here. Standalone scripts that call
+  `QdrantService` raise `ResponseHandlingException`. Use the running backend,
+  or avoid retrieval.
+- The first Groq call after a restart is cold and roughly 7 s. Warm turns are
+  much faster. Do not read the first measurement as a regression.
+- `VOICE_MAX_TOKENS` is 320 by default and is not set in `backend/.env`.
+  `reasoning_effort=low` must stay on every Groq call or replies will
+  intermittently come back empty.
+- Git warns about LF/CRLF on every commit. It is noise from
+  `core.autocrlf`, not a problem with the files.
+- Voice sessions are keyed by `client_id`; the probes use their own ids so they
+  do not disturb a browser session.
