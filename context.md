@@ -183,3 +183,65 @@ Total new tests: 19. Total suite: 152.
 4. Phrases: Add opt_out and human_request phrase keys to phrases.py with TTS rendering
 5. End-to-end probe: language_gate_probe.py extended with settlement/soundbox scenarios
 6. README update: Phase 4 section with architecture diagram and run instructions
+
+---
+
+## Session 2026-10-30 (evening) — Language Fixes, Greeting, Memory Debug
+
+**Commits:** d2bcf48
+**Tests:** 157/157 PASS (was 152, +5 new tests)
+**TypeScript:** clean
+
+### Changes made
+
+#### 1. Greeting phrase updated (phrases.py)
+- Old: "Would you be comfortable in English, Hindi or Kannada?"
+- New: "Hello and welcome to Paytm. Would you be comfortable in English, Hindi or Kannada?"
+- Cleared .cache/voice_phrases/* so new clip is rendered on next startup
+
+#### 2. Tool call responses translated into merchant language (paytm_tools.py)
+- Added spoken_summary_for_language(result, language, llm) function
+- For en-IN: returns English summary, no LLM call
+- For hi-IN / kn-IN: calls llm.complete_json() with JSON schema {"translation": "..."}
+- On LLM failure / None: falls back to English silently with WARNING log
+- audio.py _dispatch_intent now calls spoken_summary_for_language instead of spoken_summary
+
+#### 3. Resume + false-interruption prefixes now language-aware (audio.py)
+- Removed RESUME_PREFIX = "Returning to that thought - " (was always English)
+- Removed FALSE_INTERRUPTION_RESUME_PREFIX = "I didn't catch that..." (was always English)
+- Added _RESUME_PREFIX dict: hi-IN, kn-IN, en-IN translations
+- Added _FALSE_RESUME_PREFIX dict: matching translations
+- Added helper functions: _resume_prefix(lang), _false_resume_prefix(lang)
+- _schedule_resume() default prefix now reads from _resume_prefix(session.effective_language)
+- Interruption watchdog now calls _false_resume_prefix(session.effective_language)
+
+#### 4. Upstash Redis URL bug fixed (.env)
+- Was: UPSTASH_REDIS_URL= https://concise-tapir-162853.upstash.io (leading space)
+- Fixed: UPSTASH_REDIS_URL=https://concise-tapir-162853.upstash.io (no space)
+- BUT: hostname still fails DNS (getaddrinfo failed). Owner needs to provide correct Upstash REST URL.
+- Current behavior: in-process dict fallback (session history lives within process only)
+
+#### 5. Tests updated
+- test_language_selection.py: added test_greeting_has_paytm_welcome
+- test_phase4.py: +4 tests for spoken_summary_for_language:
+  - test_english_passthrough_no_translation
+  - test_no_llm_falls_back_to_english
+  - test_hindi_translation_called_with_llm
+  - test_translation_failure_returns_english
+- BUILD_LOG.md and HANDOFF.md fully updated
+
+### What the mock data tells merchants
+
+QR: MID001=active/500, MID002=inactive/error
+Settlement: TXN001=settled 1200.50, TXN002=pending 750, TXN003=on_hold 300
+Soundbox: SB001=online, SB002=offline/error
+Refund: TXN001=already processed; others create new refund
+
+### Next steps (Phase 5)
+
+1. Owner provides correct Upstash REST URL → Redis persistence restored
+2. Memory write-back: after tool calls, store result summary in MemoryService
+3. Phase 5 frontend: dedicated tool call panel in ArchitectureDashboard
+4. Groq-based slot extraction for txn_id/device_id from transcript
+5. End-to-end probe: extend language_gate_probe.py with settlement/soundbox scenarios
+6. README.md creation for the repository

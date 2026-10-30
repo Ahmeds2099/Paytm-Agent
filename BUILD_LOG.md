@@ -1135,3 +1135,115 @@ the hash includes the text.
 - `_schedule_phrases` runs Cartesia in a worker thread on a cache miss. A cold
   first call after deleting the cache can add a couple of seconds per clip; the
   startup warm avoids this in normal runs.
+
+---
+
+## Phase 4 — Paytm Agent Tool Layer (2026-10-30)
+
+### Commits
+- `82a324d` phase4: Paytm agent + tools (152 tests pass, tsc clean)
+- `67f6836` docs: context.md Phase 4 session notes
+- `d2bcf48` fix: greeting + language-aware responses + resume prefix + Upstash URL
+
+### Owner-requested fixes applied before Phase 4 start (commit 6f0323e)
+
+| # | Request | File changed | Outcome |
+|---|---|---|---|
+| 10.1 | Greeting: drop trilingual, single English line | phrases.py | Done |
+| 10.2 | Remove Emotion row from dashboard UI | frontend/app/page.tsx | Done; Knowledge row kept |
+| 10.3 | Reduce latency: pre-warm Groq, lower STT silence / max tokens | main.py, config.py | Done |
+
+Then in the same session the greeting was updated again (10.1 revision):
+> "Hello and welcome to Paytm. Would you be comfortable in English, Hindi or Kannada?"
+
+### What Phase 4 built
+
+#### Step 1 — Mock Paytm API (mock_paytm/ on port 8200)
+
+Four REST routes with deterministic seed data:
+
+| Route | Data |
+|---|---|
+| GET /qr/{merchant_id} | MID001=active, MID002=inactive |
+| GET /settlement/{txn_id} | TXN001=settled 1200.50, TXN002=pending 750, TXN003=on_hold 300 |
+| POST /refund | Idempotent by txn_id; TXN001 already processed |
+| GET /soundbox/{device_id} | SB001=online, SB002=offline |
+
+Run: `python -m mock_paytm` (from project root, venv active in backend/)
+
+#### Step 2 — Tool layer (backend/app/services/paytm_tools.py)
+
+- 4 tools: lookup_qr, settlement_status, trigger_refund, soundbox_health
+- 3 s httpx timeout; returns typed ToolResult; never raises
+- spoken_summary() -> English one-liner per result
+- spoken_summary_for_language(result, language, llm) -> translates via Groq complete_json (JSON schema {"translation": "..."}) for hi-IN / kn-IN; falls back to English silently
+
+#### Step 3 — Audit log (backend/app/services/audit_log.py)
+
+- JSONL appended to backend/.audit/calls.jsonl on every tool call
+- Fields: ts, session_id, client_id, intent, tool, args, result_status, result_summary, latency_ms
+- Never raises on write failure (WARNING log only)
+
+#### Step 4 — Session flags (voice/session.py)
+
+Added: escalated: bool, repeat_complaint_count: int, last_intent: str | None
+
+#### Step 5 — Config additions (core/config.py)
+
+MOCK_PAYTM_URL, AUDIT_LOG_PATH, VOICE_ENABLE_TOOLS, SARVAM_STT_SILENCE_MS=350, VOICE_MAX_TOKENS=200
+
+#### Step 6 — Intent wired into voice path (audio.py: _dispatch_intent)
+
+Called after language lock, before _schedule_response.
+
+Intent ? Tool mapping:
+- settlement_query ? settlement_status(txn_id)
+- device_issue / soundbox_issue ? soundbox_health(device_id)
+- qr_code_issue ? lookup_qr(merchant_id)
+- refund_query ? trigger_refund(txn_id, amount)
+
+Escalation intents:
+- opt_out ? session.escalated=True, speak opt_out phrase, done
+- human_request ? session.escalated=True, speak human_request phrase, emit escalation WS event
+- repeat_complaint x2 ? same as human_request
+
+Pipeline stage event (type: pipeline_stage, stage: intent) emitted every turn for dashboard.
+Tool call event (type: tool_call) emitted per successful dispatch.
+
+#### Step 7 — Language-aware resume / false-interruption prefix (audio.py)
+
+RESUME_PREFIX and FALSE_INTERRUPTION_RESUME_PREFIX replaced with:
+- _RESUME_PREFIX dict: hi-IN "?? ???? ?? ???? ??? ???", kn-IN "? ???????? ??????????", en-IN "Returning to that thought"
+- _FALSE_RESUME_PREFIX dict: matching translations
+- Helper functions: _resume_prefix(lang), _false_resume_prefix(lang)
+
+#### Step 8 — Frontend (Phase 4 types + UI)
+
+- types.ts: ToolCall, EscalationEvent, intent PipelineStageName
+- websocket.ts: onToolCall?, onEscalation? handlers; tool_call + escalation switch cases
+- usevoice.ts: toolCallLog (last 10), escalation, dismissEscalation()
+- page.tsx: tool call log (last 3) in session-signals; escalation banner (amber)
+
+### Bug fixes this session
+
+- .env UPSTASH_REDIS_URL had a leading space ( https://...) causing Redis to always fall back to in-process dict. Removed space; Upstash hostname still pending correct URL from owner (concise-tapir-162853 fails DNS).
+
+### Test counts
+
+| Suite | Before | After |
+|---|---|---|
+| Total tests | 133 | 157 |
+| New Phase 4 tests | 0 | +19 (test_phase4.py) |
+| New greeting tests | 0 | +1 (test_greeting_has_paytm_welcome) |
+| New language-summary tests | 0 | +4 (spoken_summary_for_language) |
+
+All 157 pass. TypeScript tsc --noEmit clean.
+
+### What remains open
+
+1. **Upstash Redis** — owner to provide correct REST URL + token; current URL fails DNS. Until fixed, session history is in-process (lost on restart) but still functional within a session.
+2. **Qdrant connection** — qdrant_client prints UserWarning on startup (version check); not breaking.
+3. **Phrase cache** — cleared; first call after restart will re-render the greeting clip (1-2 s one-time delay per language per phrase).
+4. **Slot extraction** — intent classifier extracts txn_id/device_id from transcript with basic regex; Groq-based slot extraction not yet wired.
+5. **Phase 5** — memory write-back, dedicated tool call panel in ArchitectureDashboard, end-to-end probe for settlement/soundbox scenarios.
+
