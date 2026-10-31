@@ -155,6 +155,9 @@ export type SystemStatus = {
     tools_enabled: boolean;
     emotion_enabled: boolean;
     mode: "local" | "lite";
+    vad_provider?: string;
+    whisper_fallback_enabled?: boolean;
+    rag_enabled?: boolean;
     tts_provider?: "cartesia" | "sarvam";
     tts_model?: string;
   };

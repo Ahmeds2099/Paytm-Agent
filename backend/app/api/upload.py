@@ -7,8 +7,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.services.document_ingestion import DocumentIngestionService
-from app.services.domain_classifier import DomainClassifier
+from app.core.config import settings
 from app.services.embedder import EmbeddingService
 from app.services.qdrant_service import QdrantService
 
@@ -46,9 +45,17 @@ DEMO_DOCUMENTS = {
     },
 }
 
-ingestion = DocumentIngestionService()
 embedder = EmbeddingService()
-domain_classifier = DomainClassifier()
+SUPPORTED_EXTENSIONS = {".pdf", ".csv", ".json"}
+MAX_FILE_BYTES = 10 * 1024 * 1024
+
+
+def _require_rag() -> None:
+    if not settings.VOICE_ENABLE_RAG:
+        raise HTTPException(
+            status_code=503,
+            detail="Document ingestion is disabled for this deployment.",
+        )
 
 
 def _ingest_contents(
@@ -57,6 +64,12 @@ def _ingest_contents(
     *,
     document_id: str | None = None,
 ) -> dict:
+    _require_rag()
+    from app.services.document_ingestion import DocumentIngestionService
+    from app.services.domain_classifier import DomainClassifier
+
+    ingestion = DocumentIngestionService()
+    domain_classifier = DomainClassifier()
     extension = Path(original_filename).suffix.lower()
     if extension not in ingestion.SUPPORTED_EXTENSIONS:
         raise HTTPException(
@@ -132,9 +145,10 @@ def _ingest_contents(
 
 @router.post("/")
 async def upload_document(file: UploadFile = File(...)):
+    _require_rag()
     original_filename = Path(file.filename or "upload").name
     extension = Path(original_filename).suffix.lower()
-    if extension not in ingestion.SUPPORTED_EXTENSIONS:
+    if extension not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail="Only PDF, CSV, and JSON files are supported.",
@@ -151,7 +165,7 @@ async def upload_document(file: UploadFile = File(...)):
             detail="The file content type does not match its extension.",
         )
 
-    contents = await file.read(ingestion.MAX_FILE_BYTES + 1)
+    contents = await file.read(MAX_FILE_BYTES + 1)
     return _ingest_contents(original_filename, contents)
 
 
@@ -167,6 +181,7 @@ async def list_demo_documents():
 
 @router.post("/demos/{slug}")
 async def activate_demo_document(slug: str):
+    _require_rag()
     metadata = DEMO_DOCUMENTS.get(slug)
     if metadata is None:
         raise HTTPException(status_code=404, detail="Unknown demo document.")

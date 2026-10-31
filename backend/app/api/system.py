@@ -37,7 +37,11 @@ async def system_status():
                 else "missing"
             ),
             "sarvam_tts": "configured" if settings.SARVAM_API_KEY else "missing",
-            "qdrant": "ready" if qdrant_ready else "unavailable",
+            "qdrant": (
+                "disabled"
+                if not settings.VOICE_ENABLE_RAG
+                else "ready" if qdrant_ready else "unavailable"
+            ),
             "redis": session_repository.status,
             "emotion": emotion_provider.status,
         },
@@ -52,6 +56,9 @@ async def system_status():
                 else settings.DEEPGRAM_MODEL
             ),
             "default_language": settings.VOICE_DEFAULT_LANGUAGE,
+            "vad_provider": settings.VOICE_VAD_PROVIDER,
+            "whisper_fallback_enabled": settings.VOICE_ALLOW_WHISPER_FALLBACK,
+            "rag_enabled": settings.VOICE_ENABLE_RAG,
             "tts_provider": settings.VOICE_TTS_PROVIDER,
             "tts_model": (
                 settings.SARVAM_TTS_MODEL
@@ -66,7 +73,6 @@ async def system_status():
 class SystemSettingsUpdate(BaseModel):
     tools_enabled: bool | None = None
     emotion_enabled: bool | None = None
-    mode: str | None = None
     tts_provider: Literal["cartesia", "sarvam"] | None = None
 
 
@@ -76,8 +82,6 @@ async def update_settings(update: SystemSettingsUpdate):
         settings.VIA_ENABLE_TOOLS = update.tools_enabled
     if update.emotion_enabled is not None:
         settings.VOICE_ENABLE_EMOTION = update.emotion_enabled
-    if update.mode is not None:
-        settings.ENVIRONMENT = "production" if update.mode == "lite" else "development"
     if update.tts_provider is not None:
         try:
             TTSFactory.set_provider(update.tts_provider)
@@ -89,6 +93,9 @@ async def update_settings(update: SystemSettingsUpdate):
             "tools_enabled": settings.VIA_ENABLE_TOOLS,
             "emotion_enabled": settings.VOICE_ENABLE_EMOTION,
             "mode": "lite" if settings.ENVIRONMENT == "production" else "local",
+            "vad_provider": settings.VOICE_VAD_PROVIDER,
+            "whisper_fallback_enabled": settings.VOICE_ALLOW_WHISPER_FALLBACK,
+            "rag_enabled": settings.VOICE_ENABLE_RAG,
             "tts_provider": settings.VOICE_TTS_PROVIDER,
         },
     }
@@ -96,6 +103,9 @@ async def update_settings(update: SystemSettingsUpdate):
 
 
 def _qdrant_ready() -> bool:
+    if not settings.VOICE_ENABLE_RAG or client is None:
+        return False
+
     try:
         client.get_collections()
         return True

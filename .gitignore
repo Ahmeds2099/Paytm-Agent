@@ -81,7 +81,8 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 .cache/
 .huggingface/
-models/
+/models/
+backend/models/
 *.onnx
 *.pt
 *.wav

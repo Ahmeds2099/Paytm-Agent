@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import uuid
 
+from app.core.config import settings
 from app.core.prompts import SYSTEM_PROMPT
 from app.models.query import QueryRequest
 from app.services.conversation_service import ConversationService
@@ -24,12 +25,13 @@ def stream_answer(request: QueryRequest):
 
     session_id = request.session_id or str(uuid.uuid4())
 
-    query_vector = embedder.embed_query(request.query)
-
-    chunks = QdrantService.search(
-        query_vector,
-        document_ids=request.document_ids,
-    )
+    chunks = []
+    if settings.VOICE_ENABLE_RAG:
+        query_vector = embedder.embed_query(request.query)
+        chunks = QdrantService.search(
+            query_vector,
+            document_ids=request.document_ids,
+        )
 
     prompt = PromptBuilder.build(
         request.query,

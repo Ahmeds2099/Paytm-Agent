@@ -2,17 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-# pyrefly: ignore [missing-import]
-from qdrant_client.models import (
-    Distance,
-    FieldCondition,
-    Filter,
-    MatchValue,
-    PayloadSchemaType,
-    PointStruct,
-    VectorParams,
-)
-
+from app.core.config import settings
 from app.core.qdrant import client
 from app.services.conversation_service import ConversationService
 from app.services.embedder import EmbeddingService
@@ -27,7 +17,17 @@ class MemoryService:
         self.initialize()
 
     def initialize(self) -> None:
+        if not settings.VOICE_ENABLE_RAG:
+            return
+
         try:
+            # pyrefly: ignore [missing-import]
+            from qdrant_client.models import (
+                Distance,
+                PayloadSchemaType,
+                VectorParams,
+            )
+
             collections = client.get_collections()
             existing = {collection.name for collection in collections.collections}
             if self.COLLECTION_NAME not in existing:
@@ -41,6 +41,9 @@ class MemoryService:
             return
 
     def _ensure_client_index(self) -> None:
+        # pyrefly: ignore [missing-import]
+        from qdrant_client.models import PayloadSchemaType
+
         client.create_payload_index(
             collection_name=self.COLLECTION_NAME,
             field_name="client_id",
@@ -50,8 +53,14 @@ class MemoryService:
 
     def store_memory(self, text: str, client_id: str) -> str:
         memory_id = str(uuid4())
-        embedding = self.embedder.embed_query(text)
         ConversationService.add_memory(client_id, memory_id, text)
+        if not settings.VOICE_ENABLE_RAG:
+            return memory_id
+
+        embedding = self.embedder.embed_query(text)
+        # pyrefly: ignore [missing-import]
+        from qdrant_client.models import PointStruct
+
         try:
             client.upsert(
                 collection_name=self.COLLECTION_NAME,
@@ -78,8 +87,19 @@ class MemoryService:
         client_id: str,
         limit: int = 3,
     ) -> list[str]:
+        if not settings.VOICE_ENABLE_RAG:
+            return self._fallback_memories(client_id, limit)
+
         embedding = self.embedder.embed_query(query)
+
         def query_qdrant():
+            # pyrefly: ignore [missing-import]
+            from qdrant_client.models import (
+                FieldCondition,
+                Filter,
+                MatchValue,
+            )
+
             return client.query_points(
                 collection_name=self.COLLECTION_NAME,
                 query=embedding,

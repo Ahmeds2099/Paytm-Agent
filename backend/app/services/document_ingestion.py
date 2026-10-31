@@ -7,8 +7,6 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from app.services.chunker import TextChunker
 
 
@@ -85,6 +83,8 @@ class DocumentIngestionService:
     @staticmethod
     def _extract_pdf(path: Path) -> list[ExtractedRecord]:
         try:
+            import fitz
+
             document = fitz.open(path)
         except Exception as exc:
             raise ValueError(f"The PDF could not be opened: {exc}") from exc

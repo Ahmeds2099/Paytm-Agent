@@ -3,8 +3,9 @@ import shutil
 import tempfile
 import asyncio
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from app.core.config import settings
 from app.services.stt import STTFactory
 
 router = APIRouter(
@@ -16,6 +17,11 @@ router = APIRouter(
 async def transcribe_audio(
     audio: UploadFile = File(...),
 ):
+    if not settings.VOICE_ALLOW_WHISPER_FALLBACK:
+        raise HTTPException(
+            status_code=503,
+            detail="File transcription is unavailable in the lite deployment.",
+        )
 
     suffix = os.path.splitext(audio.filename)[1]
 

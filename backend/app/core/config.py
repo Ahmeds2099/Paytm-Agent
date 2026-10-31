@@ -10,6 +10,7 @@ class Settings:
 
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     DEMO_RESET_ENABLED = ENVIRONMENT == "development"
+    IS_LITE_DEPLOYMENT = ENVIRONMENT == "production"
 
     CORS_ORIGINS: list[str] = [
         origin.strip()
@@ -56,6 +57,10 @@ class Settings:
         "RAG_RELEVANCE_THRESHOLD",
         "0.55",
     ))
+    VOICE_ENABLE_RAG: bool = os.getenv(
+        "VOICE_ENABLE_RAG",
+        "false" if IS_LITE_DEPLOYMENT else "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
     LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")
 
@@ -134,8 +139,13 @@ class Settings:
 
     VOICE_ALLOW_WHISPER_FALLBACK: bool = os.getenv(
         "VOICE_ALLOW_WHISPER_FALLBACK",
-        "true",
+        "false" if IS_LITE_DEPLOYMENT else "true",
     ).strip().lower() in {"1", "true", "yes", "on"}
+
+    VOICE_VAD_PROVIDER: str = os.getenv(
+        "VOICE_VAD_PROVIDER",
+        "energy" if IS_LITE_DEPLOYMENT else "silero",
+    ).strip().lower()
 
     VOICE_ALLOW_DEEPGRAM_FALLBACK: bool = os.getenv(
         "VOICE_ALLOW_DEEPGRAM_FALLBACK",
@@ -190,7 +200,7 @@ class Settings:
 
     VIA_ENABLE_TOOLS: bool = os.getenv(
         "VIA_ENABLE_TOOLS",
-        "true",
+        "false" if IS_LITE_DEPLOYMENT else "true",
     ).strip().lower() in {"1", "true", "yes", "on"}
 
     # Phase 4: mock Paytm API server.

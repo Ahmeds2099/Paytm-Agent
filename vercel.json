@@ -9,7 +9,7 @@
       "root": "backend",
       "framework": "fastapi",
       "entrypoint": "app.main:app",
-      "installCommand": "pip install -r requirements.txt",
+      "installCommand": "pip install -r requirements-vercel-lite.txt",
       "bindings": [
         {
           "type": "service",
@@ -23,7 +23,7 @@
       "root": ".",
       "framework": "fastapi",
       "entrypoint": "mock_paytm.__main__:app",
-      "installCommand": "pip install -r backend/requirements-lite.txt"
+      "installCommand": "pip install -r backend/requirements-mock.txt"
     }
   },
   "rewrites": [

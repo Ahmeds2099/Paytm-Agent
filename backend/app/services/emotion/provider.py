@@ -8,8 +8,6 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
-# pyrefly: ignore [missing-import]
-from funasr import AutoModel
 
 from app.core.config import settings
 
@@ -79,6 +77,10 @@ class Emotion2VecProvider:
                 return True
             self._status = "loading"
             try:
+                # Import the optional ML stack only when emotion is enabled.
+                # Lite deployments intentionally omit FunASR and Torch.
+                # pyrefly: ignore [missing-import]
+                from funasr import AutoModel
 
                 self.model = AutoModel(
                     model=settings.EMOTION2VEC_MODEL,

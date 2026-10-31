@@ -37,7 +37,7 @@ type Props = {
   voiceState: VoiceState;
   interruptCount: number;
   sessionId: string;
-  onUpdateSettings?: (update: { tools_enabled?: boolean; emotion_enabled?: boolean; mode?: "local" | "lite"; tts_provider?: "cartesia" | "sarvam" }) => Promise<boolean>;
+  onUpdateSettings?: (update: { tools_enabled?: boolean; emotion_enabled?: boolean; tts_provider?: "cartesia" | "sarvam" }) => Promise<boolean>;
 };
 
 export default function ArchitectureDashboard({
@@ -50,6 +50,7 @@ export default function ArchitectureDashboard({
   sessionId,
   onUpdateSettings,
 }: Props) {
+  const isLiteDeployment = process.env.NEXT_PUBLIC_DEPLOYMENT_PROFILE === "lite";
   const latestByStage = new Map(stages.map((stage) => [stage.stage, stage]));
   const assistantTurns = conversation.filter((turn) => turn.role === "assistant");
   const measured = assistantTurns
@@ -88,32 +89,27 @@ export default function ArchitectureDashboard({
               <strong>System Controls</strong>
               <div className="toggle-group">
                 <label className="toggle-label">
-                  <span>Companion Tools</span>
+                  <span>Companion Tools{isLiteDeployment ? " (not configured)" : ""}</span>
                   <input
                     type="checkbox"
                     checked={currentSettings.tools_enabled}
+                    disabled={isLiteDeployment}
                     onChange={(e) => onUpdateSettings?.({ tools_enabled: e.target.checked })}
                   />
                 </label>
                 <label className="toggle-label">
-                  <span>Emotion Adaptation</span>
+                  <span>Emotion Adaptation{isLiteDeployment ? " (local only)" : ""}</span>
                   <input
                     type="checkbox"
                     checked={currentSettings.emotion_enabled}
+                    disabled={isLiteDeployment}
                     onChange={(e) => onUpdateSettings?.({ emotion_enabled: e.target.checked })}
                   />
                 </label>
-                <label className="toggle-label">
-                  <span>Execution Mode</span>
-                  <select
-                    value={currentSettings.mode}
-                    onChange={(e) => onUpdateSettings?.({ mode: e.target.value as "local" | "lite" })}
-                    className="mode-select"
-                  >
-                    <option value="local">Local Full Build</option>
-                    <option value="lite">Render Lite Build</option>
-                  </select>
-                </label>
+                <div className="toggle-label">
+                  <span>Deployment Profile</span>
+                  <strong>{currentSettings.mode === "lite" ? "Hosted Lite" : "Local Full"}</strong>
+                </div>
               </div>
             </div>
           </details>

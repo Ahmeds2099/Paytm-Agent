@@ -2,18 +2,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from qdrant_client.models import (
-    Distance,
-    FieldCondition,
-    Filter,
-    MatchAny,
-    MatchValue,
-    PayloadSchemaType,
-    FilterSelector,
-    PointStruct,
-    VectorParams,
-)
-
 from app.core.config import settings
 from app.core.qdrant import client
 
@@ -23,6 +11,16 @@ class QdrantService:
 
     @classmethod
     def initialize(cls) -> None:
+        if not settings.VOICE_ENABLE_RAG:
+            return
+
+        # pyrefly: ignore [missing-import]
+        from qdrant_client.models import (
+            Distance,
+            PayloadSchemaType,
+            VectorParams,
+        )
+
         collections = client.get_collections()
         existing = {collection.name for collection in collections.collections}
         if cls.COLLECTION_NAME not in existing:
@@ -45,6 +43,9 @@ class QdrantService:
         document_ids: list[str] | None = None,
         min_score: float | None = None,
     ) -> list[dict]:
+        if not settings.VOICE_ENABLE_RAG:
+            return []
+
         # An explicitly empty context means that the user chose general
         # assistant mode. It must never fall through to a collection-wide
         # search and leak context from unrelated uploads.
@@ -53,6 +54,9 @@ class QdrantService:
 
         query_filter = None
         if document_ids:
+            # pyrefly: ignore [missing-import]
+            from qdrant_client.models import FieldCondition, Filter, MatchAny
+
             query_filter = Filter(
                 must=[
                     FieldCondition(
@@ -102,8 +106,13 @@ class QdrantService:
         created_at: str,
         domain_profile: dict,
     ) -> None:
+        if not settings.VOICE_ENABLE_RAG:
+            raise RuntimeError("Document retrieval is disabled for this deployment.")
         if len(chunks) != len(embeddings):
             raise ValueError("Chunk and embedding counts do not match.")
+
+        # pyrefly: ignore [missing-import]
+        from qdrant_client.models import PointStruct
 
         cls.initialize()
         points = [
@@ -130,7 +139,18 @@ class QdrantService:
 
     @classmethod
     def delete_document(cls, document_id: str) -> None:
+        if not settings.VOICE_ENABLE_RAG:
+            return
+
         try:
+            # pyrefly: ignore [missing-import]
+            from qdrant_client.models import (
+                FieldCondition,
+                Filter,
+                FilterSelector,
+                MatchValue,
+            )
+
             client.delete(
                 collection_name=cls.COLLECTION_NAME,
                 points_selector=FilterSelector(

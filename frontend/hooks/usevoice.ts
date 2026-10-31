@@ -146,6 +146,11 @@ export function useVoice() {
 
     const apiBase = useMemo(() => resolveApiUrl().replace(/\/$/, ""), []);
 
+    useEffect(() => {
+        if (systemStatus?.settings?.rag_enabled !== false) return;
+        localStorage.removeItem(DOCUMENT_KEY);
+    }, [systemStatus?.settings?.rag_enabled]);
+
     const checkSystem = useCallback(async () => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 5000);
@@ -171,7 +176,6 @@ export function useVoice() {
         async (update: {
             tools_enabled?: boolean;
             emotion_enabled?: boolean;
-            mode?: "local" | "lite";
             tts_provider?: "cartesia" | "sarvam";
         }) => {
             setTTSUpdating(Boolean(update.tts_provider));
@@ -878,7 +882,9 @@ export function useVoice() {
         fallbackMessage,
         voiceError,
         emotion,
-        activeDocument,
+        activeDocument: systemStatus?.settings?.rag_enabled === false
+            ? null
+            : activeDocument,
         uploading,
         uploadError,
         restoredState,

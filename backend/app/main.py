@@ -79,13 +79,14 @@ async def startup_event():
             name="groq-warmup",
         )
 
-try:
-    QdrantService.initialize()
-except Exception:
-    # Document retrieval is an enhancement, not a prerequisite for
-    # starting Via in general voice-assistant mode. Runtime health is
-    # reported by /system/status and ingestion returns an actionable 503.
-    pass
+if settings.VOICE_ENABLE_RAG:
+    try:
+        QdrantService.initialize()
+    except Exception:
+        # Document retrieval is an enhancement, not a prerequisite for
+        # starting Via in general voice-assistant mode. Runtime health is
+        # reported by /system/status and ingestion returns an actionable 503.
+        pass
 
 app.add_middleware(
     CORSMiddleware,

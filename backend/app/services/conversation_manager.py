@@ -46,11 +46,13 @@ class ConversationManager:
         language: str | None = None,
         scenario_context: str | None = None,
     ) -> tuple[list[dict], list[dict], dict]:
-        query_vector = self.embedder.embed_query(query)
-        chunks = QdrantService.search(
-            query_vector,
-            document_ids=document_ids,
-        )
+        chunks = []
+        if settings.VOICE_ENABLE_RAG:
+            query_vector = self.embedder.embed_query(query)
+            chunks = QdrantService.search(
+                query_vector,
+                document_ids=document_ids,
+            )
         prompt = PromptBuilder.build(query, chunks)
         history = ConversationService.get_messages(session_id)
         memories = self.memory.search(

@@ -248,7 +248,7 @@ export default function HomePage() {
                 <span className="status-dot" data-status={voice.connected ? "ready" : "idle"} />
                 <span>Simulating: <strong>{selectedMerchant.name}</strong></span>
               </div>
-            ) : workspace !== "session" ? null : (
+            ) : workspace !== "session" || voice.systemStatus?.settings?.rag_enabled === false ? null : (
               <button className="source-trigger" onClick={() => setDocumentUploadOpen(true)} type="button">
                 <span className="status-dot" data-status={voice.connected ? "ready" : "idle"} />
                 Upload document
