@@ -21,6 +21,7 @@ class LiteDeploymentTests(unittest.TestCase):
                 "PYTHON_DOTENV_DISABLED": "1",
                 "QDRANT_URL": "",
                 "QDRANT_API_KEY": "",
+                "CORS_ORIGINS": "*",
             }
         )
         for name in (
@@ -29,6 +30,7 @@ class LiteDeploymentTests(unittest.TestCase):
             "VOICE_ENABLE_EMOTION",
             "VIA_ENABLE_TOOLS",
             "VOICE_ENABLE_RAG",
+            "CORS_ORIGIN_REGEX",
         ):
             environment.pop(name, None)
 
@@ -72,6 +74,23 @@ session = VoiceSession()
 assert session.vad.engine.__class__.__name__ == "EnergyEngine"
 assert app is not None
 with TestClient(app) as client:
+    origin = "https://paytm-agent-l94q-fraqmaqwd-ahmeds2099s-projects.vercel.app"
+    preflight = client.options(
+        "/demo/merchants",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    assert preflight.headers["access-control-allow-credentials"] == "true"
+    disallowed = client.get(
+        "/health",
+        headers={"Origin": "https://another-project.vercel.app"},
+    )
+    assert "access-control-allow-origin" not in disallowed.headers
+
     status = client.get("/system/status")
     assert status.status_code == 200
     assert status.json()["settings"]["rag_enabled"] is False

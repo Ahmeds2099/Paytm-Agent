@@ -13,26 +13,34 @@ class Settings:
     IS_LITE_DEPLOYMENT = ENVIRONMENT == "production"
 
     CORS_ORIGINS: list[str] = [
-        origin.strip()
+        origin.strip().rstrip("/")
         for origin in os.getenv(
             "CORS_ORIGINS",
-            "http://localhost:3100,http://127.0.0.1:3100",
+            (
+                "http://localhost:3100,http://127.0.0.1:3100"
+                if ENVIRONMENT == "development"
+                else "https://paytm-agent.vercel.app"
+            ),
         ).split(",")
-        if origin.strip()
+        if origin.strip() and origin.strip() != "*"
     ]
 
-    CORS_ORIGIN_REGEX: str | None = os.getenv(
-        "CORS_ORIGIN_REGEX",
-        (
-            r"^https?://(?:localhost|127\.0\.0\.1|"
-            r"10(?:\.\d{1,3}){3}|"
-            r"192\.168(?:\.\d{1,3}){2}|"
-            r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})"
-            r"(?::\d+)?$"
-            if ENVIRONMENT == "development"
-            else ""
-        ),
-    ) or None
+    _DEFAULT_CORS_ORIGIN_REGEX = (
+        r"^https?://(?:localhost|127\.0\.0\.1|"
+        r"10(?:\.\d{1,3}){3}|"
+        r"192\.168(?:\.\d{1,3}){2}|"
+        r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})"
+        r"(?::\d+)?$"
+        if ENVIRONMENT == "development"
+        else (
+            r"^https://paytm-agent-[a-z0-9-]+-"
+            r"ahmeds2099s-projects\.vercel\.app$"
+        )
+    )
+    CORS_ORIGIN_REGEX: str | None = (
+        os.getenv("CORS_ORIGIN_REGEX")
+        or _DEFAULT_CORS_ORIGIN_REGEX
+    )
 
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
