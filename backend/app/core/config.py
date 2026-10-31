@@ -12,18 +12,19 @@ class Settings:
     DEMO_RESET_ENABLED = ENVIRONMENT == "development"
     IS_LITE_DEPLOYMENT = ENVIRONMENT == "production"
 
-    CORS_ORIGINS: list[str] = [
+    _DEFAULT_CORS_ORIGINS = (
+        ["http://localhost:3100", "http://127.0.0.1:3100"]
+        if ENVIRONMENT == "development"
+        else ["https://paytm-agent.vercel.app"]
+    )
+    _CONFIGURED_CORS_ORIGINS = [
         origin.strip().rstrip("/")
-        for origin in os.getenv(
-            "CORS_ORIGINS",
-            (
-                "http://localhost:3100,http://127.0.0.1:3100"
-                if ENVIRONMENT == "development"
-                else "https://paytm-agent.vercel.app"
-            ),
-        ).split(",")
+        for origin in os.getenv("CORS_ORIGINS", "").split(",")
         if origin.strip() and origin.strip() != "*"
     ]
+    CORS_ORIGINS: list[str] = list(
+        dict.fromkeys(_DEFAULT_CORS_ORIGINS + _CONFIGURED_CORS_ORIGINS)
+    )
 
     _DEFAULT_CORS_ORIGIN_REGEX = (
         r"^https?://(?:localhost|127\.0\.0\.1|"

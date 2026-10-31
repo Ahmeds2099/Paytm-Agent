@@ -85,6 +85,14 @@ with TestClient(app) as client:
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == origin
     assert preflight.headers["access-control-allow-credentials"] == "true"
+    production_alias = client.get(
+        "/health",
+        headers={"Origin": "https://paytm-agent.vercel.app"},
+    )
+    assert (
+        production_alias.headers["access-control-allow-origin"]
+        == "https://paytm-agent.vercel.app"
+    )
     disallowed = client.get(
         "/health",
         headers={"Origin": "https://another-project.vercel.app"},
