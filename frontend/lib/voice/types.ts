@@ -129,11 +129,16 @@ export type DemoMerchant = {
   avatar: string;
   scenario_id: string;
   scenario_label: string;
+  scenario_description: string;
   member_since: string;
   total_transactions: number;
   account_balance: string;
   open_tickets: number;
   transaction_id?: string | null;
+  transaction_amount?: number | null;
+  transaction_status?: string | null;
+  transaction_date?: string | null;
+  expected_date?: string | null;
   device_id?: string | null;
   recommended?: boolean;
   opted_out?: boolean;
@@ -150,5 +155,7 @@ export type SystemStatus = {
     tools_enabled: boolean;
     emotion_enabled: boolean;
     mode: "local" | "lite";
+    tts_provider?: "cartesia" | "sarvam";
+    tts_model?: string;
   };
 };

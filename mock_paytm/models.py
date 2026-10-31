@@ -35,6 +35,23 @@ class RefundResult(BaseModel):
     processed_date: Optional[str] = None
 
 
+class RefundApprovalRequest(BaseModel):
+    txn_id: str
+    amount: float
+    merchant_id: str
+    transaction_date: Optional[str] = None
+
+
+class RefundApprovalResult(BaseModel):
+    approval_id: str
+    txn_id: str
+    amount: float
+    merchant_id: str
+    transaction_date: Optional[str] = None
+    status: str
+    created_at: str
+
+
 class TicketRequest(BaseModel):
     merchant_id: str
     issue_type: str

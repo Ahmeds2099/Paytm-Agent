@@ -133,6 +133,7 @@ export function useVoice() {
     const [interruptCount, setInterruptCount] = useState(0);
     const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
     const [systemError, setSystemError] = useState("");
+    const [ttsUpdating, setTTSUpdating] = useState(false);
     const [demoDocuments, setDemoDocuments] = useState<DemoDocument[]>([]);
     const [selectedMerchant, setSelectedMerchant] = useState<DemoMerchant | null>(null);
     // Phase 4
@@ -140,6 +141,8 @@ export function useVoice() {
     const [escalation, setEscalation] = useState<EscalationEvent | null>(null);
     const [callOutcome, setCallOutcome] = useState("");
     const selectedMerchantRef = useRef<DemoMerchant | null>(null);
+    const pendingMerchantRef = useRef<DemoMerchant | null | undefined>(undefined);
+    const connectRef = useRef<((merchantOverride?: DemoMerchant | null) => Promise<void>) | null>(null);
 
     const apiBase = useMemo(() => resolveApiUrl().replace(/\/$/, ""), []);
 
@@ -165,18 +168,33 @@ export function useVoice() {
 
 
     const updateSystemSettings = useCallback(
-        async (update: { tools_enabled?: boolean; emotion_enabled?: boolean; mode?: "local" | "lite" }) => {
+        async (update: {
+            tools_enabled?: boolean;
+            emotion_enabled?: boolean;
+            mode?: "local" | "lite";
+            tts_provider?: "cartesia" | "sarvam";
+        }) => {
+            setTTSUpdating(Boolean(update.tts_provider));
             try {
                 const response = await fetch(`${apiBase}/system/settings`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(update),
                 });
-                if (!response.ok) throw new Error("Failed to update settings");
-                await checkSystem();
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.detail ?? `Settings update failed (${response.status})`);
+                }
+                if (!await checkSystem()) {
+                    throw new Error("Settings were updated, but the backend status could not be refreshed.");
+                }
+                setSystemError("");
                 return true;
-            } catch {
+            } catch (reason) {
+                setSystemError(reason instanceof Error ? reason.message : "Could not update system settings.");
                 return false;
+            } finally {
+                setTTSUpdating(false);
             }
         },
         [apiBase, checkSystem],
@@ -213,7 +231,9 @@ export function useVoice() {
     }, []);
 
     const connect = useCallback(async (merchantOverride?: DemoMerchant | null) => {
-        const merchant = merchantOverride ?? selectedMerchantRef.current;
+        const merchant = merchantOverride === undefined
+            ? selectedMerchantRef.current
+            : merchantOverride;
         if (merchant) {
             selectedMerchantRef.current = merchant;
             setSelectedMerchant(merchant);
@@ -333,6 +353,13 @@ export function useVoice() {
             recorderRef.current = null;
             socketRef.current = null;
             stopPlayback();
+            const pendingMerchant = pendingMerchantRef.current;
+            pendingMerchantRef.current = undefined;
+            if (pendingMerchant !== undefined) {
+                window.setTimeout(() => {
+                    void connectRef.current?.(pendingMerchant);
+                }, 0);
+            }
         };
 
         socket.onError = () => {
@@ -642,6 +669,10 @@ export function useVoice() {
         }, 8000);
     }, [apiBase, checkSystem, stopPlayback]);
 
+    useEffect(() => {
+        connectRef.current = connect;
+    }, [connect]);
+
     const disconnect = useCallback(() => {
         recorderRef.current?.stop();
         recorderRef.current = null;
@@ -652,6 +683,16 @@ export function useVoice() {
         nextPlaybackTimeRef.current = 0;
         setVoiceState("idle");
     }, [stopPlayback]);
+
+    const switchMerchant = useCallback((merchant: DemoMerchant) => {
+        selectMerchant(merchant);
+        if (socketRef.current) {
+            pendingMerchantRef.current = merchant;
+            disconnect();
+            return;
+        }
+        void connect(merchant);
+    }, [connect, disconnect, selectMerchant]);
 
     const requestEscalation = useCallback(() => {
         if (socketRef.current?.connected) {
@@ -771,6 +812,13 @@ export function useVoice() {
     useEffect(() => {
         const fallbackDemos: DemoDocument[] = [
             {
+                title: "Paytm Merchant Support Guide",
+                description: "Support guidelines and fictional demo records (JSON)",
+                format: "JSON",
+                slug: "paytm-merchant-guide",
+                filename: "paytm-merchant-guide.json",
+            },
+            {
                 title: "Real estate advisor",
                 description: "Property listings & market guide (PDF)",
                 format: "PDF",
@@ -840,11 +888,13 @@ export function useVoice() {
         interruptCount,
         systemStatus,
         systemError,
+        ttsUpdating,
         demoDocuments,
         selectedMerchant,
         selectMerchant,
         apiBase,
         connect,
+        switchMerchant,
         disconnect,
         requestEscalation,
         startListening,

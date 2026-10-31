@@ -9,6 +9,7 @@ class Settings:
     VERSION = "0.1.0"
 
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+    DEMO_RESET_ENABLED = ENVIRONMENT == "development"
 
     CORS_ORIGINS: list[str] = [
         origin.strip()
@@ -68,6 +69,16 @@ class Settings:
         "CARTESIA_MODEL",
         "sonic-3.6",
     )
+
+    VOICE_TTS_PROVIDER: str = os.getenv(
+        "VOICE_TTS_PROVIDER",
+        "cartesia",
+    ).strip().lower()
+
+    SARVAM_TTS_MODEL: str = os.getenv(
+        "SARVAM_TTS_MODEL",
+        "bulbul:v4-flash",
+    ).strip()
 
     # Cartesia uses this when the session language is still ``auto``.
     VOICE_TTS_LANGUAGE: str = os.getenv(

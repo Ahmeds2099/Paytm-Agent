@@ -23,6 +23,7 @@ export default function MerchantCard({ merchant, selected = false, onSelect }: P
         <strong>{merchant.name}</strong>
         <small>{merchant.business_name}</small>
         <span>{merchant.scenario_label}</span>
+        <p className="merchant-card-description">{merchant.scenario_description}</p>
       </div>
       <div className="merchant-card-footer">
         <span>{merchant.city}</span>

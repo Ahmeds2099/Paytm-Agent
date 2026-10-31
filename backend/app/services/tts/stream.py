@@ -25,9 +25,6 @@ class StreamingTTS:
         self,
         language: str | None = None,
     ):
-
-        self.provider = TTSFactory.get_provider()
-
         self.language = language
 
         self.buffer = ""
@@ -106,7 +103,7 @@ class StreamingTTS:
         sentence: str,
     ):
 
-        for audio in self.provider.stream(
+        for audio in TTSFactory.get_provider().stream(
             sentence,
             language=self.language,
         ):

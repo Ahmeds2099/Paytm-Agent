@@ -20,6 +20,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 DEMO_DIR = Path(__file__).resolve().parents[3] / "docs" / "demo-data"
 
 DEMO_DOCUMENTS = {
+    "paytm-merchant-guide": {
+        "filename": "paytm-merchant-guide.json",
+        "title": "Paytm Merchant Support Guide",
+        "description": "Approved support guidelines and clearly labelled fictional demo account data.",
+        "format": "JSON",
+    },
     "real-estate-brief": {
         "filename": "real-estate-brief.pdf",
         "title": "Real estate advisor",

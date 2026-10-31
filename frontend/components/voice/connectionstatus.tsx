@@ -17,26 +17,24 @@ export default function ConnectionStatus({
 }: Props) {
 
     if (connecting) {
-
         return (
-            <p className="text-yellow-500">
-                🟡 Connecting...
+            <p className="text-yellow-500" data-status="connecting">
+                <span aria-hidden="true" className="status-dot" data-status="connecting" /> Connecting...
             </p>
         );
     }
 
     if (connected) {
-
         return (
-            <p className="text-green-500">
-                🟢 Connected
+            <p className="text-green-500" data-status="ready">
+                <span aria-hidden="true" className="status-dot" data-status="ready" /> Connected
             </p>
         );
     }
 
     return (
-        <p className="text-red-500">
-            🔴 Disconnected
+        <p className="text-red-500" data-status="idle">
+            <span aria-hidden="true" className="status-dot" data-status="idle" /> Disconnected
         </p>
     );
 }

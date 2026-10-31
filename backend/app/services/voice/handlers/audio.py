@@ -40,6 +40,7 @@ from app.services.paytm_tools import (
     lookup_qr,
     settlement_status,
     trigger_refund,
+    request_refund_approval,
     soundbox_health,
     raise_ticket,
     spoken_summary_for_language,
@@ -869,6 +870,8 @@ class AudioHandler:
         session: VoiceSession,
         connection_manager: VoiceConnectionManager,
         text: str,
+        *,
+        close_call_outcome: str | None = None,
     ) -> None:
         controller = self._new_controller()
 
@@ -885,6 +888,29 @@ class AudioHandler:
                         language=session.effective_language,
                     ),
                 )
+                if close_call_outcome:
+                    await session.wait_for_playback(controller.response_id)
+                    call_id = session.metadata.get("call_id")
+                    if call_id:
+                        end_call(
+                            call_id,
+                            outcome=close_call_outcome,
+                            language=session.effective_language,
+                            ticket_id=session.metadata.get("ticket_id"),
+                            escalated=close_call_outcome.startswith("escalated:"),
+                            opt_out=session.metadata.get("opt_out_persisted", False),
+                            repeat_complaint_count=session.repeat_complaint_count,
+                            attention_reason=session.metadata.get("attention_reason"),
+                            requires_human_approval=session.metadata.get(
+                                "requires_human_approval",
+                                False,
+                            ),
+                            refund_request=session.metadata.get("refund_request"),
+                        )
+                    await connection_manager.send_json(
+                        session.session_id,
+                        {"type": "call_closed", "outcome": close_call_outcome},
+                    )
             except Exception as exc:
                 await self._send_error(
                     session,
@@ -902,6 +928,119 @@ class AudioHandler:
             name="voice-system-message",
         )
         session.set_voice_task(task, controller)
+
+    @staticmethod
+    def _refund_confirmation_text(txn_id: str, amount: float, language: str) -> str:
+        amount_text = f"{amount:,.0f}"
+        if language == "hi-IN":
+            return (
+                f"आपकी प्रोफ़ाइल में मुझे हाल का ट्रांज़ैक्शन {txn_id}, "
+                f"₹{amount_text} का दिख रहा है। क्या आप इसी ट्रांज़ैक्शन "
+                "के रिफंड के बारे में पूछ रही हैं?"
+            )
+        if language == "kn-IN":
+            return (
+                f"ನಿಮ್ಮ ಪ್ರೊಫೈಲ್‌ನಲ್ಲಿ ಇತ್ತೀಚಿನ {txn_id} ವಹಿವಾಟು "
+                f"₹{amount_text} ಎಂದು ಕಾಣುತ್ತಿದೆ. ಇದೇ ವಹಿವಾಟಿನ ಮರುಪಾವತಿ "
+                "ಕುರಿತೇ ಕೇಳುತ್ತಿದ್ದೀರಾ?"
+            )
+        return (
+            f"I can see a recent transaction in your profile: {txn_id} for "
+            f"{amount_text} rupees. Is this the transaction you want refunded?"
+        )
+
+    @staticmethod
+    def _refund_approval_confirmation_text(amount: float, language: str) -> str:
+        amount_text = f"{amount:,.0f}"
+        if language == "hi-IN":
+            return (
+                f"धन्यवाद। क्या मैं ₹{amount_text} के रिफंड अनुरोध को "
+                "मानवीय स्वीकृति के लिए भेज दूँ? अभी कोई रिफंड शुरू नहीं होगा।"
+            )
+        if language == "kn-IN":
+            return (
+                f"ಧನ್ಯವಾದಗಳು. ₹{amount_text} ಮರುಪಾವತಿ ವಿನಂತಿಯನ್ನು "
+                "ಮಾನವ ಅನುಮೋದನೆಗೆ ಕಳುಹಿಸಬಹುದೇ? ಈಗ ಯಾವುದೇ ಮರುಪಾವತಿ "
+                "ಪ್ರಾರಂಭವಾಗುವುದಿಲ್ಲ."
+            )
+        return (
+            f"Thanks. Should I submit the {amount_text}-rupee refund request "
+            "for human approval? No refund will be initiated now."
+        )
+
+    @staticmethod
+    def _refund_approval_text(amount: float, language: str) -> str:
+        amount_text = f"{amount:,.0f}"
+        if language == "hi-IN":
+            return (
+                f"आपका ₹{amount_text} का रिफंड अनुरोध ध्यान के लिए दर्ज "
+                "कर दिया है। मानवीय स्वीकृति ज़रूरी है; अभी रिफंड शुरू "
+                "नहीं हुआ है।"
+            )
+        if language == "kn-IN":
+            return (
+                f"ನಿಮ್ಮ ₹{amount_text} ಮರುಪಾವತಿ ವಿನಂತಿಯನ್ನು ಗಮನಕ್ಕಾಗಿ "
+                "ದಾಖಲಿಸಿದ್ದೇನೆ. ಮಾನವ ಅನುಮೋದನೆ ಅಗತ್ಯವಿದೆ; ಮರುಪಾವತಿ "
+                "ಇನ್ನೂ ಪ್ರಾರಂಭವಾಗಿಲ್ಲ."
+            )
+        return (
+            f"Your {amount_text}-rupee refund request is flagged for attention "
+            "and requires human approval. The refund has not been initiated."
+        )
+
+    async def _handle_human_request(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        language: str,
+    ) -> None:
+        if (
+            not session.metadata.get("issue_mentioned")
+            and not session.metadata.get("human_request_deferred")
+        ):
+            session.metadata["human_request_deferred"] = True
+            self._schedule_phrases(
+                session,
+                connection_manager,
+                [("human_request_deferred", language)],
+            )
+            return
+        await self._escalate_for_human(
+            session,
+            connection_manager,
+            "merchant_requested_human",
+            language,
+        )
+
+    async def _escalate_for_human(
+        self,
+        session: VoiceSession,
+        connection_manager: VoiceConnectionManager,
+        reason: str,
+        language: str,
+    ) -> None:
+        session.escalated = True
+        session.metadata["outcome"] = "escalated:human_requested"
+        session.metadata["attention_reason"] = (
+            "Merchant requested a human colleague."
+            if reason == "merchant_requested_human"
+            else "Repeated unresolved complaint needs human follow-up."
+        )
+        await connection_manager.send_json(
+            session.session_id,
+            {"type": "escalation", "reason": reason},
+        )
+        self._schedule_phrases(
+            session,
+            connection_manager,
+            [(
+                "human_request_escalated"
+                if reason == "merchant_requested_human"
+                else "human_request",
+                language,
+            )],
+            close_call_outcome="escalated:human_requested",
+        )
 
     # ------------------------------------------------------------------
     # Phase 4: intent classification + tool dispatch
@@ -937,6 +1076,8 @@ class AudioHandler:
         )
         session.last_intent = result.label
         call_id = session.metadata.get("call_id")
+        if result.topic or result.label in {"settlement_query", "device_issue"}:
+            session.metadata["issue_mentioned"] = True
         if call_id:
             record_intent(
                 call_id,
@@ -970,40 +1111,21 @@ class AudioHandler:
             return True
 
         if result.label == "human_request":
-            session.escalated = True
-            session.metadata["outcome"] = "escalated:human_requested"
-            lang = session.effective_language or "en-IN"
-            self._schedule_phrases(
+            await self._handle_human_request(
                 session,
                 connection_manager,
-                [("human_request", lang)],
-            )
-            await connection_manager.send_json(
-                session.session_id,
-                {
-                    "type": "escalation",
-                    "reason": "merchant_requested_human",
-                },
+                session.effective_language or "en-IN",
             )
             return True
 
         if result.label == "repeat_complaint":
             session.repeat_complaint_count += 1
             if session.repeat_complaint_count >= 2:
-                session.escalated = True
-                session.metadata["outcome"] = "escalated:repeated_complaint"
-                lang = session.effective_language or "en-IN"
-                self._schedule_phrases(
+                await self._escalate_for_human(
                     session,
                     connection_manager,
-                    [("human_request", lang)],
-                )
-                await connection_manager.send_json(
-                    session.session_id,
-                    {
-                        "type": "escalation",
-                        "reason": "repeated_complaint",
-                    },
+                    "repeated_complaint",
+                    session.effective_language or "en-IN",
                 )
                 return True
             # First repeat_complaint: fall through to LLM for empathy reply
@@ -1020,16 +1142,116 @@ class AudioHandler:
         tool_args: dict = {}
         tool_name = ""
         scenario = session.metadata.get("scenario", {})
+        close_call_outcome: str | None = None
+        response_override: str | None = None
+        refund_lookup = False
 
         if result.label == "settlement_query":
             txn_id = (
                 slots.get("transaction_id")
                 or scenario.get("transaction_id")
-                or "TXN002"
             )
+            if not txn_id:
+                session.metadata["awaiting_transaction_lookup_id"] = True
+                self._schedule_system_message(
+                    session,
+                    connection_manager,
+                    phrase_text(
+                        "transaction_id_required",
+                        session.effective_language or "en-IN",
+                    ),
+                )
+                return True
             tool_args = {"txn_id": txn_id}
             tool_name = "settlement_status"
             tool_result = await asyncio.to_thread(settlement_status, txn_id)
+
+        elif (
+            result.label == "confirmation_yes"
+            and session.metadata.get("awaiting_refund_transaction_confirmation")
+        ):
+            session.metadata["awaiting_refund_transaction_confirmation"] = False
+            session.metadata["awaiting_refund_approval"] = True
+            amount = float(session.metadata["refund_amount"])
+            response_override = self._refund_approval_confirmation_text(
+                amount,
+                session.effective_language or "en-IN",
+            )
+
+        elif (
+            result.label == "confirmation_no"
+            and session.metadata.get("awaiting_refund_transaction_confirmation")
+        ):
+            session.metadata["awaiting_refund_transaction_confirmation"] = False
+            alternate_txn_id = slots.get("transaction_id")
+            if alternate_txn_id:
+                session.metadata["awaiting_refund_txn_id"] = False
+                tool_args = {"txn_id": str(alternate_txn_id)}
+                tool_name = "settlement_status"
+                tool_result = await asyncio.to_thread(
+                    settlement_status,
+                    str(alternate_txn_id),
+                )
+                refund_lookup = True
+            else:
+                session.metadata["awaiting_refund_txn_id"] = True
+                response_override = phrase_text(
+                    "transaction_id_required",
+                    session.effective_language or "en-IN",
+                )
+
+        elif (
+            result.label == "confirmation_yes"
+            and session.metadata.get("awaiting_refund_approval")
+        ):
+            session.metadata["awaiting_refund_approval"] = False
+            txn_id = str(session.metadata["refund_txn_id"])
+            amount = float(session.metadata["refund_amount"])
+            txn_date = session.metadata.get("refund_transaction_date")
+            merchant_id = str(session.metadata.get("merchant_id") or "")
+            tool_args = {
+                "txn_id": txn_id,
+                "amount": amount,
+                "merchant_id": merchant_id,
+                "transaction_date": txn_date,
+            }
+            tool_name = "refund_approval_request"
+            tool_result = await asyncio.to_thread(
+                request_refund_approval,
+                txn_id,
+                amount,
+                merchant_id,
+                txn_date,
+            )
+            if tool_result.ok:
+                approval_id = tool_result.data.get("approval_id")
+                session.metadata["outcome"] = "pending:refund_approval"
+                session.metadata["requires_human_approval"] = True
+                session.metadata["attention_reason"] = (
+                    "Refund request needs human approval before any funds move."
+                )
+                session.metadata["refund_request"] = {
+                    "approval_id": approval_id,
+                    "txn_id": txn_id,
+                    "amount": amount,
+                    "transaction_date": txn_date,
+                    "status": "pending_approval",
+                }
+                response_override = self._refund_approval_text(
+                    amount,
+                    session.effective_language or "en-IN",
+                )
+                close_call_outcome = "pending:refund_approval"
+
+        elif (
+            result.label == "confirmation_no"
+            and session.metadata.get("awaiting_refund_approval")
+        ):
+            session.metadata["awaiting_refund_approval"] = False
+            response_override = phrase_text(
+                "refund_approval_declined",
+                session.effective_language or "en-IN",
+            )
 
         elif (
             result.label == "confirmation_yes"
@@ -1056,6 +1278,31 @@ class AudioHandler:
             and session.metadata.get("awaiting_settlement_priority")
         ):
             session.metadata["awaiting_settlement_priority"] = False
+            response_override = phrase_text(
+                "settlement_priority_declined",
+                session.effective_language or "en-IN",
+            )
+
+        elif (
+            session.metadata.get("awaiting_refund_txn_id")
+            and result.slots.get("transaction_id")
+        ):
+            txn_id = str(result.slots["transaction_id"])
+            session.metadata["awaiting_refund_txn_id"] = False
+            tool_args = {"txn_id": txn_id}
+            tool_name = "settlement_status"
+            tool_result = await asyncio.to_thread(settlement_status, txn_id)
+            refund_lookup = True
+
+        elif (
+            session.metadata.get("awaiting_transaction_lookup_id")
+            and result.slots.get("transaction_id")
+        ):
+            txn_id = str(result.slots["transaction_id"])
+            session.metadata["awaiting_transaction_lookup_id"] = False
+            tool_args = {"txn_id": txn_id}
+            tool_name = "settlement_status"
+            tool_result = await asyncio.to_thread(settlement_status, txn_id)
 
         elif result.label == "device_issue" or topic == "soundbox_issue":
             device_id = slots.get("device_id") or scenario.get("device_id") or "SB001"
@@ -1074,13 +1321,47 @@ class AudioHandler:
             tool_result = await asyncio.to_thread(lookup_qr, merchant_id)
 
         elif topic == "refund_query":
-            txn_id = slots.get("transaction_id") or scenario.get("transaction_id") or "TXN001"
-            amount = float(slots.get("amount", 0) or 0)
-            tool_args = {"txn_id": txn_id, "amount": amount}
-            tool_name = "trigger_refund"
-            tool_result = await asyncio.to_thread(trigger_refund, txn_id, amount)
+            txn_id = slots.get("transaction_id") or scenario.get("transaction_id")
+            if not txn_id:
+                session.metadata["awaiting_refund_txn_id"] = True
+                self._schedule_system_message(
+                    session,
+                    connection_manager,
+                    phrase_text(
+                        "transaction_id_required",
+                        session.effective_language or "en-IN",
+                    ),
+                )
+                return True
+            tool_args = {"txn_id": txn_id}
+            tool_name = "settlement_status"
+            tool_result = await asyncio.to_thread(settlement_status, txn_id)
+            refund_lookup = True
+
+        elif (
+            not scenario
+            and topic == "transaction_issue"
+            and not slots.get("transaction_id")
+        ):
+            session.metadata["awaiting_transaction_lookup_id"] = True
+            self._schedule_system_message(
+                session,
+                connection_manager,
+                phrase_text(
+                    "transaction_id_required",
+                    session.effective_language or "en-IN",
+                ),
+            )
+            return True
 
         if tool_result is None:
+            if response_override:
+                self._schedule_system_message(
+                    session,
+                    connection_manager,
+                    response_override,
+                )
+                return True
             # No tool matched — let the LLM answer.
             return False
 
@@ -1110,8 +1391,6 @@ class AudioHandler:
                     round((time.perf_counter() - ticket_started) * 1000),
                 )
             )
-        elif tool_name == "trigger_refund" and tool_result.ok:
-            session.metadata["outcome"] = "resolved:refund_initiated"
         elif tool_result.ok and not session.metadata.get("outcome"):
             session.metadata["outcome"] = "resolved:info_provided"
 
@@ -1162,13 +1441,51 @@ class AudioHandler:
                         "ticket_id": called_result.data.get("ticket_id"),
                     },
                 )
-            summaries.append(
-                spoken_summary_for_language(
-                    called_result,
-                    session.effective_language,
-                    self.manager.llm if settings.GROQ_API_KEY else None,
+            if response_override and called_tool == tool_name:
+                summaries.append(response_override)
+            elif called_tool == "settlement_status" and refund_lookup:
+                if called_result.ok:
+                    try:
+                        amount = float(called_result.data.get("amount"))
+                    except (TypeError, ValueError):
+                        amount = 0
+                    if amount <= 0:
+                        summaries.append(
+                            phrase_text(
+                                "refund_amount_unavailable",
+                                session.effective_language or "en-IN",
+                            )
+                        )
+                    else:
+                        session.metadata["awaiting_refund_transaction_confirmation"] = True
+                        session.metadata["refund_txn_id"] = called_result.data.get("txn_id", tool_args["txn_id"])
+                        session.metadata["refund_amount"] = amount
+                        session.metadata["refund_transaction_date"] = (
+                            called_result.data.get("settled_date")
+                            or called_result.data.get("expected_date")
+                        )
+                        summaries.append(
+                            self._refund_confirmation_text(
+                                str(session.metadata["refund_txn_id"]),
+                                amount,
+                                session.effective_language or "en-IN",
+                            )
+                        )
+                else:
+                    summaries.append(
+                        phrase_text(
+                            "refund_transaction_not_found",
+                            session.effective_language or "en-IN",
+                        )
+                    )
+            else:
+                summaries.append(
+                    spoken_summary_for_language(
+                        called_result,
+                        session.effective_language,
+                        self.manager.llm if settings.GROQ_API_KEY else None,
+                    )
                 )
-            )
 
         if (
             tool_name == "settlement_status"
@@ -1188,6 +1505,7 @@ class AudioHandler:
             session,
             connection_manager,
             " ".join(summary for summary in summaries if summary),
+            close_call_outcome=close_call_outcome,
         )
         return True
 
@@ -1306,6 +1624,12 @@ class AudioHandler:
                             escalated=session.metadata.get("outcome", "").startswith("escalated:"),
                             opt_out=session.metadata.get("opt_out_persisted", False),
                             repeat_complaint_count=session.repeat_complaint_count,
+                            attention_reason=session.metadata.get("attention_reason"),
+                            requires_human_approval=session.metadata.get(
+                                "requires_human_approval",
+                                False,
+                            ),
+                            refund_request=session.metadata.get("refund_request"),
                         )
                     await connection_manager.send_json(
                         session.session_id,
@@ -1483,14 +1807,33 @@ class AudioHandler:
 
         if result.action in {"opt_out", "human_request"}:
             await self._stop_active_speech(session, connection_manager)
-            language = session.effective_language or "en-IN"
             if result.action == "opt_out":
-                await self._close_opt_out(session, connection_manager, language)
-            else:
-                self._schedule_phrases(
+                await self._close_opt_out(
                     session,
                     connection_manager,
-                    [(result.action, language)],
+                    session.effective_language or "en-IN",
+                )
+            else:
+                language = result.language or session.detected_language
+                if not language:
+                    if any("\u0c80" <= char <= "\u0cff" for char in transcript):
+                        language = "kn-IN"
+                    elif any("\u0900" <= char <= "\u097f" for char in transcript):
+                        language = "hi-IN"
+                    else:
+                        language = "en-IN"
+                if not session.language_locked:
+                    await self._set_session_language(
+                        session,
+                        connection_manager,
+                        language,
+                        lock=True,
+                    )
+                    session.metadata["greeted"] = True
+                await self._handle_human_request(
+                    session,
+                    connection_manager,
+                    language,
                 )
             return True
 
@@ -2273,7 +2616,15 @@ class AudioHandler:
                 self._schedule_phrases(
                     session,
                     connection_manager,
-                    [("greeting", language) for language in GREETING_ORDER],
+                    [
+                        (
+                            "demo_greeting_opt_out"
+                            if session.metadata.get("scenario", {}).get("scenario_id") == "opt_out"
+                            else "greeting",
+                            language,
+                        )
+                        for language in GREETING_ORDER
+                    ],
                 )
             return
 

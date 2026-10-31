@@ -64,3 +64,8 @@ def is_opted_out(merchant_id: str) -> bool:
 def list_opted_out() -> set[str]:
     with _lock:
         return set(_read())
+
+
+def reset_opt_outs() -> None:
+    with _lock:
+        _write({})

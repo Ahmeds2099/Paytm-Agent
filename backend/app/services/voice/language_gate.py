@@ -66,7 +66,8 @@ def resolve_language_gate(
     if rule is not None and rule.label == "opt_out":
         return LanguageGateResult("opt_out", None, attempts)
     if rule is not None and rule.label == "human_request":
-        return LanguageGateResult("human_request", None, attempts)
+        language = rule.slots.get("language") or extract_language(transcript)
+        return LanguageGateResult("human_request", language, attempts)
 
     code = detect_language_choice(transcript)
     if code is not None:

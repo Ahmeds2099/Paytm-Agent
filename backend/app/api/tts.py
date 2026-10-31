@@ -14,16 +14,14 @@ class TTSRequest(BaseModel):
     text: str
 
 
-provider = TTSFactory.get_provider()
-
-
 @router.post("/synthesize")
 async def synthesize(
     request: TTSRequest,
 ):
 
-    audio = provider.synthesize(
+    audio = TTSFactory.get_provider().synthesize(
         request.text,
+        language="en-IN",
     )
 
     return Response(

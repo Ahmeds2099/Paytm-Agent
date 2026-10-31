@@ -22,6 +22,7 @@ import threading
 from pathlib import Path
 
 from app.core.config import settings
+from app.services.tts.base import strip_wav
 from app.services.tts.factory import TTSFactory
 from app.services.voice.phrases import PHRASES, phrase_text
 
@@ -29,26 +30,6 @@ logger = logging.getLogger(__name__)
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CACHE_DIR = _BACKEND_ROOT / ".cache" / "voice_phrases"
-
-
-def strip_wav(data: bytes) -> bytes:
-    """Return the ``data`` chunk of a RIFF/WAVE file, or the input unchanged."""
-
-    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        return data
-
-    offset = 12
-    while offset + 8 <= len(data):
-        chunk_id = data[offset : offset + 4]
-        size = int.from_bytes(data[offset + 4 : offset + 8], "little")
-        start = offset + 8
-        end = start + size
-        if chunk_id == b"data":
-            return data[start:end]
-        # Chunks are word aligned.
-        offset = end + (size & 1)
-
-    return data
 
 
 class PhraseCache:
@@ -74,8 +55,10 @@ class PhraseCache:
                 phrase_id,
                 language,
                 text,
+                settings.VOICE_TTS_PROVIDER,
                 settings.CARTESIA_MODEL,
                 settings.CARTESIA_VOICE_ID,
+                settings.SARVAM_TTS_MODEL,
             )
         )
         digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:20]
@@ -109,7 +92,7 @@ class PhraseCache:
             )
             return None
 
-        pcm = strip_wav(wav)
+        pcm = provider.decode_audio(wav)
         if not pcm:
             return None
 

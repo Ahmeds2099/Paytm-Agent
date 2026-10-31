@@ -6,8 +6,10 @@ keyed by txn_id so repeat POST /refund calls are idempotent.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, timedelta
 from threading import Lock
+from uuid import uuid4
 
 TODAY = date.today()
 
@@ -73,6 +75,28 @@ REFUND_STORE: dict[str, dict] = {
         "processed_date": str(TODAY - timedelta(days=1)),
     },
 }
+REFUND_APPROVAL_STORE: dict[str, dict] = {}
+_refund_approval_lock = Lock()
+
+
+def create_refund_approval(
+    txn_id: str,
+    amount: float,
+    merchant_id: str,
+    transaction_date: str | None = None,
+) -> dict:
+    with _refund_approval_lock:
+        record = {
+            "approval_id": f"REF-APP-{uuid4().hex[:8].upper()}",
+            "txn_id": txn_id,
+            "amount": amount,
+            "merchant_id": merchant_id,
+            "transaction_date": transaction_date,
+            "status": "pending_approval",
+            "created_at": date.today().isoformat(),
+        }
+        REFUND_APPROVAL_STORE[record["approval_id"]] = record
+        return dict(record)
 
 SOUNDBOX_STORE: dict[str, dict] = {
     "SB001": {
@@ -169,3 +193,26 @@ def create_refund(txn_id: str, amount: float) -> dict:
     }
     REFUND_STORE[txn_id] = result
     return result
+
+
+_INITIAL_QR_STORE = deepcopy(QR_STORE)
+_INITIAL_SETTLEMENT_STORE = deepcopy(SETTLEMENT_STORE)
+_INITIAL_REFUND_STORE = deepcopy(REFUND_STORE)
+_INITIAL_SOUNDBOX_STORE = deepcopy(SOUNDBOX_STORE)
+_INITIAL_TICKET_STORE = deepcopy(TICKET_STORE)
+
+
+def reset_demo_fixtures() -> None:
+    global _ticket_seq
+    for store, initial in (
+        (QR_STORE, _INITIAL_QR_STORE),
+        (SETTLEMENT_STORE, _INITIAL_SETTLEMENT_STORE),
+        (REFUND_STORE, _INITIAL_REFUND_STORE),
+        (SOUNDBOX_STORE, _INITIAL_SOUNDBOX_STORE),
+        (TICKET_STORE, _INITIAL_TICKET_STORE),
+    ):
+        store.clear()
+        store.update(deepcopy(initial))
+    REFUND_APPROVAL_STORE.clear()
+    _refund_seq.clear()
+    _ticket_seq = 0

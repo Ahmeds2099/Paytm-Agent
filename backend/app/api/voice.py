@@ -81,6 +81,12 @@ async def voice_socket(
                     escalated=outcome.startswith("escalated:"),
                     opt_out=session.metadata.get("opt_out_persisted", False),
                     repeat_complaint_count=session.repeat_complaint_count,
+                    attention_reason=session.metadata.get("attention_reason"),
+                    requires_human_approval=session.metadata.get(
+                        "requires_human_approval",
+                        False,
+                    ),
+                    refund_request=session.metadata.get("refund_request"),
                 )
             connection_manager.disconnect(session.session_id)
 

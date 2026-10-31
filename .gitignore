@@ -7,6 +7,8 @@ __pycache__/
 *.py[cod]
 backend/.pytest_cache/
 backend/.mypy_cache/
+.audit/
+backend/.audit/
 .ruff_cache/
 .pytype/
 
@@ -94,6 +96,14 @@ Backup/
 architecture-*.json
 architecture-*.pdf
 architecture-*.png
+
+# Documentation and generated presentation assets
+*.md
+!README.md
+*.svg
+*.docx
+*.pdf
+*.pptx
 
 # Local agent tooling
 .agents/

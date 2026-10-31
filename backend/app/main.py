@@ -44,7 +44,12 @@ async def startup_event():
 
     # Phase 3: render the fixed phrases once, off the event loop, so the
     # greeting and language prompts are ready before the first call.
-    if settings.VOICE_ASK_LANGUAGE and settings.CARTESIA_API_KEY:
+    selected_tts_key = (
+        settings.SARVAM_API_KEY
+        if settings.VOICE_TTS_PROVIDER == "sarvam"
+        else settings.CARTESIA_API_KEY
+    )
+    if settings.VOICE_ASK_LANGUAGE and selected_tts_key:
         import asyncio
 
         from app.services.voice.prerender import warm_phrase_cache

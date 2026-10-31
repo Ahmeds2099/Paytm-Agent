@@ -23,6 +23,7 @@ function isDemoMerchant(value: unknown): value is DemoMerchant {
     && typeof merchant.avatar === "string"
     && typeof merchant.scenario_id === "string"
     && typeof merchant.scenario_label === "string"
+    && typeof merchant.scenario_description === "string"
     && typeof merchant.member_since === "string"
     && typeof merchant.total_transactions === "number"
     && typeof merchant.account_balance === "string"
@@ -133,6 +134,8 @@ export default function HomePage() {
   const [entered, setEntered] = useState(false);
   const [workspace, setWorkspace] = useState<"session" | "admin">("session");
   const [merchantPickerOpen, setMerchantPickerOpen] = useState(false);
+  const [documentUploadOpen, setDocumentUploadOpen] = useState(false);
+  const [knowledgeFile, setKnowledgeFile] = useState<File | null>(null);
   const [merchants, setMerchants] = useState<DemoMerchant[]>([]);
   const [merchantLoadError, setMerchantLoadError] = useState("");
   const [selectedMerchant, setSelectedMerchant] = useState<DemoMerchant | null>(null);
@@ -205,8 +208,25 @@ export default function HomePage() {
 
   const returnHome = () => {
     voice.disconnect();
+    voice.selectMerchant(null);
+    setSelectedMerchant(null);
     setEntered(false);
     setWorkspace("session");
+  };
+
+  const startGeneralCall = () => {
+    setSelectedMerchant(null);
+    voice.selectMerchant(null);
+    setWorkspace("session");
+    setEntered(true);
+    void voice.connect(null);
+  };
+
+  const callMerchantFromAdmin = (merchant: DemoMerchant) => {
+    setSelectedMerchant(merchant);
+    setWorkspace("session");
+    setEntered(true);
+    voice.switchMerchant(merchant);
   };
 
   return (
@@ -223,11 +243,16 @@ export default function HomePage() {
               <button aria-selected={workspace === "session"} onClick={() => setWorkspace("session")} role="tab" type="button">Call</button>
               <button aria-selected={workspace === "admin"} onClick={() => setWorkspace("admin")} role="tab" type="button">Admin</button>
             </div>
-            {selectedMerchant && (
+            {selectedMerchant ? (
               <div className="session-identity">
                 <span className="status-dot" data-status={voice.connected ? "ready" : "idle"} />
                 <span>Simulating: <strong>{selectedMerchant.name}</strong></span>
               </div>
+            ) : workspace !== "session" ? null : (
+              <button className="source-trigger" onClick={() => setDocumentUploadOpen(true)} type="button">
+                <span className="status-dot" data-status={voice.connected ? "ready" : "idle"} />
+                Upload document
+              </button>
             )}
           </div>
         ) : (
@@ -263,7 +288,52 @@ export default function HomePage() {
         </div>
       )}
 
-      {!entered || !selectedMerchant ? (
+      {documentUploadOpen && (
+        <div className="merchant-modal-backdrop" onClick={() => setDocumentUploadOpen(false)}>
+          <section
+            aria-labelledby="document-upload-title"
+            aria-modal="true"
+            className="document-upload-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="merchant-modal-header">
+              <div>
+                <p className="section-label">General merchant call</p>
+                <h2 id="document-upload-title">Upload a support document</h2>
+                <p>Upload a PDF, CSV, or JSON file to ground this call with the knowledge source.</p>
+              </div>
+              <button aria-label="Close document upload" className="icon-text-button" onClick={() => setDocumentUploadOpen(false)} type="button">Close</button>
+            </div>
+            {voice.activeDocument && (
+              <p className="active-knowledge">Active source: <strong>{voice.activeDocument.filename}</strong> · {voice.activeDocument.chunks} indexed chunks</p>
+            )}
+            <label className="knowledge-upload document-upload-picker">
+              <span>Browse files</span>
+              <input accept=".pdf,.csv,.json" onChange={(event) => setKnowledgeFile(event.target.files?.[0] ?? null)} type="file" />
+            </label>
+            {knowledgeFile && <p className="active-knowledge">Selected: <strong>{knowledgeFile.name}</strong></p>}
+            <div className="document-upload-actions">
+              <button
+                className="primary-action compact"
+                disabled={!knowledgeFile || voice.uploading}
+                onClick={() => {
+                  if (!knowledgeFile) return;
+                  void voice.uploadDocument(knowledgeFile);
+                  setKnowledgeFile(null);
+                }}
+                type="button"
+              >
+                {voice.uploading ? "Uploading…" : "Upload and index"}
+              </button>
+              <button className="quiet-action" disabled={voice.uploading} onClick={() => setDocumentUploadOpen(false)} type="button">Done</button>
+            </div>
+            {voice.uploadError && <p className="inline-error" role="alert">{voice.uploadError}</p>}
+          </section>
+        </div>
+      )}
+
+      {!entered ? (
         <div className="landing-view" id="main-content">
           <section className="hero-copy">
             <p className="section-label">Paytm Voice Teammate</p>
@@ -290,7 +360,7 @@ export default function HomePage() {
           <section aria-label="Paytm agent features" className="landing-proof">
             <div><strong>QR support</strong><p>Check merchant QR status and create a support ticket when needed.</p></div>
             <div><strong>Settlement queries</strong><p>Explain pending payments and recognize when an issue needs escalation.</p></div>
-            <div><strong>Soundbox and refunds</strong><p>Troubleshoot devices, initiate a demo refund, or honor an opt-out request.</p></div>
+            <div><strong>Soundbox and refunds</strong><p>Troubleshoot devices, request human-approved refund follow-up, or honor an opt-out request.</p></div>
           </section>
 
           <section className="demo-section" id="demo-merchants">
@@ -298,6 +368,11 @@ export default function HomePage() {
               <p className="section-label">Merchant scenarios</p>
               <h2>Choose a merchant to call.</h2>
               <p>Each card opens the persona picker. Lakshmi&apos;s refund flow is the recommended demo starting point.</p>
+              <div className="general-mode-entry">
+                <strong>Test without a persona</strong>
+                <p>Ask a merchant-support question without loading one of the scripted scenarios.</p>
+                <button className="quiet-action" onClick={startGeneralCall} type="button">Start general call</button>
+              </div>
             </div>
             {merchantLoadError && <div className="inline-error" role="alert">{merchantLoadError}</div>}
             <MerchantChooser
@@ -310,7 +385,7 @@ export default function HomePage() {
       ) : (
         <div className="workspace-view" id="main-content">
           {workspace === "admin" ? (
-            <AdminDashboard apiBase={apiBase} />
+            <AdminDashboard apiBase={apiBase} onCallMerchant={callMerchantFromAdmin} />
           ) : (
             <CallView
               connected={voice.connected}
@@ -339,7 +414,25 @@ export default function HomePage() {
                   <div><span className="status-dot" data-status={voice.connected ? "ready" : "idle"} /><span>Connection</span><strong>{voice.connected ? "Live" : "Offline"}</strong></div>
                   <div><span className="status-dot" data-status={voice.callLanguage.locked ? "ready" : "degraded"} /><span>Language</span><strong>{voice.callLanguage.display}</strong></div>
                   <div><span className="status-dot" data-status={voice.sttProvider === "deepgram" ? "ready" : "degraded"} /><span>Transcription</span><strong>{voice.sttProvider}</strong></div>
-                  <div><span className="status-dot" data-status={selectedMerchant ? "ready" : "idle"} /><span>Merchant</span><strong>{selectedMerchant.name} · {selectedMerchant.merchant_id}</strong></div>
+                  <div><span className="status-dot" data-status={selectedMerchant ? "ready" : "idle"} /><span>Merchant</span><strong>{selectedMerchant ? `${selectedMerchant.name} · ${selectedMerchant.merchant_id}` : "No persona"}</strong></div>
+                </div>
+                <div className="tts-provider-row">
+                  <label htmlFor="tts-provider">Speech output</label>
+                  <select
+                    disabled={voice.ttsUpdating || !voice.systemStatus}
+                    id="tts-provider"
+                    onChange={(event) => {
+                      const provider = event.target.value;
+                      if (provider === "cartesia" || provider === "sarvam") {
+                        void voice.updateSystemSettings({ tts_provider: provider });
+                      }
+                    }}
+                    value={voice.systemStatus?.settings?.tts_provider ?? "cartesia"}
+                  >
+                    <option value="cartesia">Cartesia</option>
+                    <option value="sarvam">Sarvam</option>
+                  </select>
+                  <span>{voice.ttsUpdating ? "Switching…" : "Applies to the next speech segment"}</span>
                 </div>
                 {voice.toolCallLog.length > 0 && (
                   <section className="tool-call-panel" aria-label="Recent tool calls">

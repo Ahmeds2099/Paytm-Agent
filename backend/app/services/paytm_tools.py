@@ -111,6 +111,39 @@ def trigger_refund(txn_id: str, amount: float) -> ToolResult:
         return ToolResult(tool="trigger_refund", status="error", error=str(exc))
 
 
+def request_refund_approval(
+    txn_id: str,
+    amount: float,
+    merchant_id: str,
+    transaction_date: str | None = None,
+) -> ToolResult:
+    """Create an approval request without moving funds or initiating a refund."""
+    try:
+        data = _post(
+            "/refund/approval",
+            {
+                "txn_id": txn_id,
+                "amount": amount,
+                "merchant_id": merchant_id,
+                "transaction_date": transaction_date,
+            },
+        )
+        return ToolResult(tool="refund_approval_request", status="ok", data=data)
+    except httpx.HTTPStatusError as exc:
+        return ToolResult(
+            tool="refund_approval_request",
+            status="error",
+            error=str(exc),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[paytm_tools] refund approval request failed: %s", exc)
+        return ToolResult(
+            tool="refund_approval_request",
+            status="error",
+            error=str(exc),
+        )
+
+
 def soundbox_health(device_id: str) -> ToolResult:
     """Check soundbox connectivity and health."""
     try:
@@ -221,6 +254,12 @@ def spoken_summary(result: ToolResult) -> str:
                 + "."
             )
         return f"Refund status is {refund_status}."
+
+    if result.tool == "refund_approval_request":
+        return (
+            f"The refund request {d.get('approval_id', '')} is waiting for "
+            "human approval. No refund has been initiated."
+        )
 
     if result.tool == "raise_ticket":
         ticket_id = d.get("ticket_id", "unknown")

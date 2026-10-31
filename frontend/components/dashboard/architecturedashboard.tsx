@@ -37,7 +37,7 @@ type Props = {
   voiceState: VoiceState;
   interruptCount: number;
   sessionId: string;
-  onUpdateSettings?: (update: { tools_enabled?: boolean; emotion_enabled?: boolean; mode?: "local" | "lite" }) => Promise<boolean>;
+  onUpdateSettings?: (update: { tools_enabled?: boolean; emotion_enabled?: boolean; mode?: "local" | "lite"; tts_provider?: "cartesia" | "sarvam" }) => Promise<boolean>;
 };
 
 export default function ArchitectureDashboard({
@@ -79,7 +79,10 @@ export default function ArchitectureDashboard({
         <div className="dashboard-heading-actions">
           <details className="architecture-settings">
             <summary aria-label="System Settings" className="settings-trigger-btn">
-              ⚙️ Controls
+              <svg aria-hidden="true" focusable="false" height="16" viewBox="0 0 24 24" width="16">
+                <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-6v2m0 15v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+              </svg>
+              Controls
             </summary>
             <div className="settings-popover">
               <strong>System Controls</strong>

@@ -80,6 +80,16 @@ def start_call(session_id: str, merchant_id: str) -> dict | None:
             "merchant_name": merchant["name"],
             "business_name": merchant["business_name"],
             "city": merchant["city"],
+            "phone": merchant["phone"],
+            "member_since": merchant["member_since"],
+            "total_transactions": merchant["total_transactions"],
+            "account_balance": merchant["account_balance"],
+            "transaction_id": merchant.get("transaction_id"),
+            "transaction_amount": merchant.get("transaction_amount"),
+            "transaction_status": merchant.get("transaction_status"),
+            "transaction_date": merchant.get("transaction_date"),
+            "expected_date": merchant.get("expected_date"),
+            "device_id": merchant.get("device_id"),
             "session_id": session_id,
             "started_at": started,
             "ended_at": None,
@@ -92,6 +102,9 @@ def start_call(session_id: str, merchant_id: str) -> dict | None:
             "escalated": False,
             "opt_out": False,
             "attention_required": False,
+            "attention_reason": None,
+            "requires_human_approval": False,
+            "refund_request": None,
             "tool_calls": [],
             "tool_results": [],
             "intent_sequence": [],
@@ -198,6 +211,9 @@ def end_call(
     opt_out: bool = False,
     repeat_complaint_count: int = 0,
     agent_spoke_seconds: int = 0,
+    attention_reason: str | None = None,
+    requires_human_approval: bool = False,
+    refund_request: dict | None = None,
 ) -> dict | None:
     with _lock:
         record = next(
@@ -223,6 +239,7 @@ def end_call(
             or repeat_complaint_count >= 2
             or (outcome == "closed:no_response" and agent_spoke_seconds > 30)
             or (failed_tools and outcome not in {"resolved:ticket_raised", "resolved:refund_initiated"})
+            or requires_human_approval
         )
         record.update(
             {
@@ -234,6 +251,9 @@ def end_call(
                 "escalated": escalated,
                 "opt_out": opt_out,
                 "attention_required": attention_required,
+                "attention_reason": attention_reason or record.get("attention_reason"),
+                "requires_human_approval": requires_human_approval,
+                "refund_request": refund_request or record.get("refund_request"),
                 "repeat_complaint_count": repeat_complaint_count,
                 "summary": _summary(record, outcome, ticket_id, escalated, opt_out),
             }
@@ -257,6 +277,12 @@ def _summary(
         return f"{record['scenario_label']} reported. Ticket {ticket_id} was raised."
     if outcome == "resolved:refund_initiated":
         return "Merchant requested a refund; refund initiation was confirmed by the mock Paytm API."
+    if outcome == "pending:refund_approval":
+        request = record.get("refund_request") or {}
+        return (
+            f"Refund request for {request.get('txn_id', 'the transaction')} "
+            "is waiting for human approval. No funds were moved."
+        )
     if outcome == "resolved:self_service":
         return "Merchant restored the soundbox through guided troubleshooting."
     return f"Call ended with outcome {outcome}."
@@ -276,6 +302,11 @@ def get_call(call_id: str) -> dict | None:
             (dict(record) for record in _read_records() if record.get("call_id") == call_id),
             None,
         )
+
+
+def reset_calls() -> None:
+    with _lock:
+        _write_records([])
 
 
 def call_id_for_session(session_id: str) -> str | None:

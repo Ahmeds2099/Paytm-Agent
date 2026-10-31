@@ -180,12 +180,23 @@ _RULES: tuple[tuple[str, tuple[re.Pattern, ...]], ...] = (
         (
             re.compile(
                 r"\b(?:human|real person|representative|customer care|"
-                r"customer support|support agent|talk to (?:an|a) agent)\b",
+                r"customer support|support agent|talk to (?:an|a) agent|"
+                r"speak to (?:a )?(?:human|person|someone)|"
+                r"talk to (?:a )?(?:human|person|someone)|"
+                r"can i (?:talk|speak) to (?:a )?(?:human|person|someone))\b",
                 re.I,
             ),
-            re.compile(r"(?:इंसान|व्यक्ति से बात|एजेंट|कस्टमर केयर|ग्राहक सेवा)"),
+            re.compile(r"(?:इंसान|व्यक्ति से बात|एजेंट|कस्टमर केयर|ग्राहक सेवा|मानव से बात|किसी व्यक्ति से बात)"),
             re.compile(
-                r"(?:ಮನುಷ್ಯ|ಮಾನವ|ವ್ಯಕ್ತಿ ಜೊತೆ|ಏಜೆಂಟ್|ಗ್ರಾಹಕ ಸೇವೆ)"
+                r"(?:ಮನುಷ್ಯ|ಮಾನವ|ವ್ಯಕ್ತಿ ಜೊತೆ|ಏಜೆಂಟ್|ಗ್ರಾಹಕ ಸೇವೆ|"
+                r"ಮನುಷ್ಯನ ಜೊತೆ ಮಾತನಾಡ|ಮಾನವನ ಜೊತೆ ಮಾತನಾಡ|"
+                r"ವ್ಯಕ್ತಿಯ ಜೊತೆ ಮಾತನಾಡ|ಮಾನವ ಸಹಾಯ|"
+                r"ಹ್ಯೂಮನ್ ಜೊತೆ ಮಾತನಾಡ|ಸಪೋರ್ಟ್ ಜೊತೆ ಮಾತನಾಡ)"
+            ),
+            re.compile(
+                r"\b(?:human|person|agent)\s+(?:jothe|jothege|speak|matad|"
+                r"matadbeku|beku)\b|\b(?:ondhu|obba)\s+(?:human|agent)\b",
+                re.I,
             ),
         ),
     ),

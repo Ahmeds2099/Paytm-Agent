@@ -3,6 +3,25 @@ from abc import ABC, abstractmethod
 from app.services.conversation.response_controller import ResponseController
 
 
+def strip_wav(data: bytes) -> bytes:
+    """Return a WAV file's data chunk, or the input unchanged."""
+
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return data
+
+    offset = 12
+    while offset + 8 <= len(data):
+        chunk_id = data[offset : offset + 4]
+        size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+        start = offset + 8
+        end = start + size
+        if chunk_id == b"data":
+            return data[start:end]
+        offset = end + (size & 1)
+
+    return data
+
+
 class TextToSpeechProvider(ABC):
     """Provider-neutral streaming speech synthesis."""
 
@@ -24,6 +43,10 @@ class TextToSpeechProvider(ABC):
             self.controller is not None
             and self.controller.cancelled
         )
+
+    def decode_audio(self, audio: bytes) -> bytes:
+        """Convert synthesized WAV audio to the browser's raw PCM format."""
+        return strip_wav(audio)
 
     @abstractmethod
     def synthesize(
