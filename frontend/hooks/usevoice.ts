@@ -655,7 +655,9 @@ export function useVoice() {
 
         setSTTProvider("initializing");
 
-        const wsBase = apiBase.replace(/^http/, "ws");
+        const wsBase = apiBase
+            ? apiBase.replace(/^http/, "ws")
+            : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
         socket.connect(`${wsBase}/ws/voice`);
         socketRef.current = socket;
         connectionTimerRef.current = setTimeout(() => {

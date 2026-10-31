@@ -1,0 +1,103 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": "frontend",
+      "framework": "nextjs"
+    },
+    "backend": {
+      "root": "backend",
+      "framework": "fastapi",
+      "entrypoint": "app.main:app",
+      "installCommand": "pip install -r requirements.txt",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "mock-paytm",
+          "format": "url",
+          "env": "MOCK_PAYTM_URL"
+        }
+      ]
+    },
+    "mock-paytm": {
+      "root": ".",
+      "framework": "fastapi",
+      "entrypoint": "mock_paytm.__main__:app",
+      "installCommand": "pip install -r backend/requirements-lite.txt"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/health(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/system/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/demo/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/upload(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/search/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/ask/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/stream/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/stt/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/tts/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/admin/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/ws/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend"
+      }
+    }
+  ]
+}
